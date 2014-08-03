@@ -1,5 +1,6 @@
 
 import time
+import random
 
 import mummy
 import databacon as db
@@ -22,32 +23,20 @@ db.connect({
 })
 
 class User(db.Entity):
-  flag_types = [
-    # 1-bit flag
-    'newsletter_sub', 
+  flags = db.flags()
+  flags.newsletter_sub = db.flag.bool(True)
+  flags.role = db.flag.enum('admin', 'staff', 'user')
+  flags.corpus_count = db.flag.int(bits=8)
+  flags.corpus_count = db.flag.int(255)
 
-    # enum (2 bits)
-    ('role', ('admin', 'staff', 'user')),
+  usernames = db.lookup.alias()
+  emails = db.lookup.alias()
+  emails.flags.verification_status = db.flag.enum('unsent', 
+                                                 'sent', 
+                                                 'resent',
+                                                 'confirmed')
 
-      # int value (max value 256)
-    ('corpus_count', 8) 
-  ]
-
-  alias_types = {
-    'username': {
-      'globally_unique': True # False creates aliases that are unique
-                              # locally, as in to this user
-    },
-    'email': {
-      'flag_types': [('verification_status', 
-                      ('unsent', 'sent', 'resent', 'confirmed'))],
-      'unique_to_owner': False
-    },
-  }
-
-  prop_types = {
-    'password': { 'value_type': str }
-  }
+  password = db.prop(str)
 
   def __init__(self, username, email, password):
     super(User, self).__init__()
@@ -56,65 +45,51 @@ class User(db.Entity):
 
 
 class Corpus(db.Node):
-  parent_type = User
+  parent = User
 
-  value_type = {
+  schema = {
     'doc_count': int,
     'top_terms': [mummy.OPTIONAL(str)]
   }
 
 
 class Doc(db.Node):
-  parent_type = Corpus
+  parent = Corpus
 
-  value_type = {
+  schema = {
     'name': str,
     'path': str,
     'term_freqs': { int: float }
   }
 
-  name_types = { 
-    'title': {
-      'search_mode': search.PHONETIC,
-      # omitting flags defaults to []
-    }
-  } 
+  titles = db.lookup.phonetic(loose=True)
+  meta = db.prop({
+    'reading_level': str,
+    'top_terms': [mummy.OPTIONAL(str)]
+  })
 
-  prop_types = {
-    'meta': {
-      'flag_types': ['totallyUnncesaryFlag'],
-      'value_type': {
-        'reading_level': str,
-        'top_terms': [mummy.OPTIONAL(str)]
-      }
-    }
-  }
+  scores = db.relation('Doc')
+  scores.flags.similarity = db.flags.int(bits=16)
 
-Doc.relation(Doc, flag_types=[('similarity', 16)])
+  terms = db.relation('Term')
 
 class Term(db.Node):
-  parent_type = Corpus
-  value_type = {
+  parent = Corpus
+  schema = {
     'count': int,
     'term': str
   }
 
-Term.relation(Doc)
 
 # consumption
 
-t = time.time()
-un0 = 'cam-%s' % t
-un1 = 'mac-%s' % t
-em0 = 'cam@-%s' % t
-em1 = 'mac@-%s' % t
-user0 = User(em0, un0, 'password')
-user1 = User(em1, un1, 'password') 
+uniq = lambda string: string + '%s-%s' % (time.time(), random.random())
+user0 = User(uniq('cam@'), uniq('cam'), 'password')
+user1 = User(uniq('mac@'), uniq('mac'), 'password') 
 
 user0.flags.newsletter_sub = True
 user0.flags.save()
 
-import pdb; pdb.set_trace()
 corpus = Corpus(user0)
 corpus_same = user0.children(Corpus)[0]
 assert corpus.guid == corpus_same.guid
@@ -122,13 +97,15 @@ assert corpus.guid == corpus_same.guid
 corpus.move(user1)
 
 corpus.children(Doc) # child nodes 
-corpus.list_children(Doc) # guids
+corpus.docs()
 doc = corpus.children(Doc)[0] 
 
 doc.flags.flagName = False
 doc.flags.enumName = Doc.flags.enumName.val0 # raises if a non-enum value assigned
 doc.flags.bitFieldName = 11 # raises if the value overflows the bitfield
 doc.flags # { 'flagName': False, 'enumName': Doc.flags.enum.val1, 'bitFieldName': 11 }
+
+doc.scores() # list of docs
 
 doc.relations(Term) # rel entries for the Term ctx
 doc.relations(Term).nodes() # and associated nodes (sadly, this also refers to entities)
