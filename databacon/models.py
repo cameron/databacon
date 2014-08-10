@@ -1,25 +1,14 @@
 import inspect
 import functools
 
-from datahog import alias, node, relationship, prop, entity, name
-from metaclasses import NodeMC, DatahogGuidDictMC
+from metaclasses import DatahogNodeDictMC, DatahogGuidDictMC
 import datahog_wrappers as dhw
-import db
 
 
-class Entity(dhw.DatahogEntity)
+class Entity(dhw.DatahogEntityDict):
   __metaclass__ = DatahogGuidDictMC
 
 
-class Node(dhw.DatahogNode):
-  __metaclass__ = NodeMC
+class Node(dhw.DatahogNodeDict):
+  __metaclass__ = DatahogNodeDictMC
 
-
-
-  
-# TODO
-# - attr instantiation
-
-# Stretch
-# - plurality (aliases, props, names)
-# - cardinality (rels)

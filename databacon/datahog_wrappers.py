@@ -2,32 +2,37 @@ import math
 
 from datahog import node, entity, alias, name, prop, relationship
 import exceptions as exc
+import fields
 import db
 
 
-class DatahogDict(object):
+class DHDict(object):
   ''' Base class for all classes that wrap datahog dicts, stored at `self._dh`
   
-  All datahog objects share a flags key and a remove operation. They all also
+  All datahog objects share a flags attr and a remove method. They all also
   have a context value (a type identifier defined by databacon), and a table
   (e.g., node).
 
-  Subsets of datahog objects have shared keys and operations, which you will 
+  Subsets of datahog objects have other shared attrs and methods, which you will 
   find handled in subclases below.
   '''
-  flag_types = None
   _table = None
   _ctx = None 
   _remove_arg_strs = None 
   _id_arg_strs = None
 
 
-  def __init__(self, dh):
+  def __init__(self, dh, flags=None):
     self._dh = dh
-    self.flags = DatahogFlags(self)
-    super(DatahogDict, self).__init__()
 
+    # TODO allow any class attr that is an instance of FlagsDef
+    if isinstance(type(self).flags, fields.FlagsDef):
+      self.flags = flags or DHFlags(self.flags._fields)
+      self.flags._table = self._table
 
+    super(DHDict, self).__init__()
+
+        
   @property
   def _dh(self):
     return self.__dh
@@ -36,7 +41,7 @@ class DatahogDict(object):
   @_dh.setter
   def _dh(self, dh):
     if dh is None:
-      raise exc.DatahogDictCannotBeNone(self)
+      raise exc.DHDictCannotBeNone(self)
     self.__dh = dh
 
 
@@ -55,7 +60,7 @@ class DatahogDict(object):
     return self._table.remove(db.pool, *args, **kwargs)
 
 
-class DatahogValueDict(DatahogDict):
+class DHValueDict(DHDict):
   ''' Adds value access for datahog dicts that have values:
   nodes, props, names, and aliases '''
   schema = None
@@ -84,15 +89,27 @@ class DatahogValueDict(DatahogDict):
     return self
 
 
+  def save(self, **kwargs):
+    return self._save(self._id_args, self._ctx, self.value, **kwargs)
+
 # save method names
 # - node: update
 # - alias/name: none (must remove/create a new one)
 # - prop: set
 
 
-class DatahogGuidDict(DatahogDict):
-  __metaclass__ = DatahogGuidDictMC
+class DHGuidDict(DHDict):
   _id_arg_strs = ('guid', )
+
+
+  def __init__(self, dh):
+    super(DHGuidDict, self).__init__(dh)
+    self._init_dh_fields()
+
+
+  def _init_dh_fields(self):
+    for name, field in self._dh_fields.iteritems():
+      setattr(self, name, field(owner=self))
 
 
   @property
@@ -103,86 +120,34 @@ class DatahogGuidDict(DatahogDict):
   def children(self, child_cls, **kwargs):
     children, offset = node.get_children(db.pool,
                                          self.guid,
-                                         self._child_ctxs[child_cls.__name__],
+                                         child_cls._ctx,
                                          **kwargs)
-    return [child_cls(dict=n) for n in children]
+    return [child_cls(dh=n) for n in children]
 
 
-  def aliases(self, alias_type, **kwargs):
-    aliases = alias.list(db.pool,
-                         self.guid, 
-                         self.alias_types[alias_type]['ctx'], **kwargs)
-    return [Alias(dict=alias_dict) for alias_dict in aliases]
+class DHPosDict(object):
+  def shift(self, index, *args, table=None):
+    table = table or self._table
+    args = [db.pool] + self._id_args + [self._ctx] + args + [index]
+    return table.shift(*args, **kwargs)
+    
 
-
-  def names(self, name_type, **kwargs):
-    names = name.list(db.pool, 
-                      self.guid, 
-                      self.name_types[name_type]['ctx'], **kwargs)
-    return [Name(dict=name_dict) for name_dict in names]
-
-
-  def props(self, **kwargs):
-    prop_dicts = prop.get_list(db.pool,
-                               self.guid, 
-                               [prop['ctx'] for prop in self.prop_types], **kwargs)
-    props = {}
-    for prop_dict in prop_dicts:
-      props[self._prop_ctx_to_name[prop_dict['ctx']]] = Prop(dict=prop_dict)
-    return props
-
-
-  def prop(prop_type, **kwargs):
-    return Prop(dict=prop.get(db.pool, 
-                              self.guid, 
-                              self.prop_types[prop_type]['ctx'], **kwargs))
-
-
-  def relations(self, rel_cls, **kwargs):
-    return Relations(rel_cls, 
-                     self._rel_flag_types.get(rel_cls, None),
-                     relationship.list(db.pool,
-                                       self.guid, 
-                                       self.rel_types[rel_cls.__name__]['ctx'], 
-                                       **kwargs))
-
-
-  def add_relation(self, guid_obj, flags=None, **kwargs):
-    return relation.create(db.pool,
-                           self._rels[guid_obj._ctx], 
-                           self.guid, guid_obj.guid, **kwargs)
-
-
-  def add_alias(self, type, value, flags=None, **kwargs):
-    return alias.set(db.pool,
-                     self.guid, 
-                     self.alias_types[type]['ctx'], 
-                     value, 
-                     flags=flags, **kwargs)
-
-
-  def add_name(self, type, value, flags=None, **kwargs):
-    return name.create(db.pool, self.guid, 
-                       self.name_types[type], 
-                       value, 
-                       flags=flags, **kwargs)
-
-
-class DatahogBaseIdDict(DatahogDict):
+class DHBaseIdDict(DHDict, DHPostDict):
   _id_arg_strs = ('base_id',)
 
 
   def __init__(self, owner=None, dh=None):
-    self.owner = owner
-    super(DatahogBaseIdDict, self).__init__(dh or self._fetch_dict)
+    self._owner = owner
+    super(DHBaseIdDict, self).__init__(dh or self._fetch_dict)
 
 
   @property
   def base_id(self):
-    return self.owner.base_id
+    return self._owner.base_id
 
 
-class DatahogRelIdDict(DatahogBaseIdDict):
+
+class DHRelation(DHBaseIdDict):
   _id_arg_strs = ('base_id', 'rel_id')
   _table = relationship
   _rel_cls_str = None
@@ -193,15 +158,10 @@ class DatahogRelIdDict(DatahogBaseIdDict):
     return self._dh['rel_id']
 
 
-  def shift(self, index, forward=True):
-    table = (forward and self._from_cls or self._to_cls)._table
-    return table.shift(db.pool,
-                       self.base_id, 
-                       self.guid, 
-                       self._ctx, 
-                       forward, 
-                       index, **kwargs)
-    
+  def shift(self, index, forward=True, **kwargs):
+    table = (forward and self._to_cls or self._from_cls)._table
+    super(DHRelation, self).shift(index, forward, table=table)
+
 
   def node(self, **kwargs):
     return self._to_cls._table.get(db.pool, 
@@ -209,11 +169,9 @@ class DatahogRelIdDict(DatahogBaseIdDict):
                                    self._ctx, **kwargs)
 
 
-
-
-class DatahogLookupDict(DatahogBaseIdDict, DatahogValueDict):
+class DHLookupDict(DHBaseIdDict, DHValueDict):
   _remove_args = ('value',)
-
+  schema = str
 
   def shift(self, index, **kwargs):
     return self._table.shift(db.pool,
@@ -222,21 +180,25 @@ class DatahogLookupDict(DatahogBaseIdDict, DatahogValueDict):
                              self.value, 
                              index, **kwargs)
 
-class DatahogEntityDict(dh.DatahogGuidDict):
+class DHEntityDict(DHGuidDict):
   _table = entity
-  def __init__(self, dict=None, **kwargs):
-    super(Entity, self).__init__(dict or entity.create(db.pool,
+
+  def __init__(self, dh=None, **kwargs):
+    super(DHEntityDict, self).__init__(dh or entity.create(db.pool,
                                                        self._ctx, **kwargs))
 
 
-class DatahogNodeDict(dh.DatahogGuidDict, dh.DatahogValueDict): 
+class DHNodeDict(DHGuidDict, DHValueDict, DHPosDict): 
   _table = node
   _remove_arg_strs = ('base_id', )
+  _save = node.update
 
-  parent_type = None 
+  parent = None 
 
-  def __init__(self, parent=None, value=None, dict=None, **kwargs):
-    super(Node, self).__init__(dict or node.create(db.pool,
+
+  def __init__(self, parent=None, value=None, dh=None, **kwargs):
+    if value or dh:
+      super(Node, self).__init__(dh or node.create(db.pool,
                                                    parent.guid,
                                                    self._ctx,
                                                    value, **kwargs))
@@ -248,6 +210,7 @@ class DatahogNodeDict(dh.DatahogGuidDict, dh.DatahogValueDict):
                              self.base_id, 
                              index, **kwargs)
 
+
   def move(self, new_parent):
     moved =  node.move(db.pool,
                        self.guid, 
@@ -257,6 +220,7 @@ class DatahogNodeDict(dh.DatahogGuidDict, dh.DatahogValueDict):
     if moved:
       self.parent = new_parent
     return moved
+
 
   def save(self, force=False, **kwargs):
     result = node.update(db.pool,
@@ -272,30 +236,105 @@ class DatahogNodeDict(dh.DatahogGuidDict, dh.DatahogValueDict):
     return result
 
 
-class Relations(list):
-  def __init__(self, rel_cls, rel_flag_types, rels):
-    super(Relations, self).__init__(map(rel_cls, rels))
-
-  def nodes(self, **kwargs):
-    ctx = self[0]._ctx
-    guid_ctx_pairs = zip([ctx]*len(rels), [r['rel_id'] for r in rels])
-    dicts = self._table.batch_get(db.pool, guid_ctx_pairs, **kwargs)
-    return [self.rel_cls(dict=dict) for dict in dicts]
+class Collection(object):
+  _page_size = 100
+  _dh_cls = None # a subclass of DHRelation, DHProp, DHAlias, or DHName
+  
+  def __init__(self, owner):
+    self._owner = owner
 
 
-class DatahogRelation(dh.DatahogRelIdDict):
-  pass
+  def __getitem__(self, idx):
+    return self._wrap_result(self._table.list(db.pool, 
+                                              self._owner.guid,
+                                              self._owner._ctx,
+                                              start=idx,
+                                              limit=1, **kwargs))
+
+  def __call__(self, **kwargs):
+    kwargs.setdefault('start', 0)
+    kwargs.setdefault('limit', self._page_size)
+    for result_set in self._list(**kwargs):
+      for result in result_set:
+        yield self._wrap_result(result, **kwargs)
 
 
-class DatahogAlias(dh.DatahogLookupDict):
+  def _wrap_result(self, result, **kwargs):
+    return self._dh_cls(result)
+
+
+  def _list(**kwargs):
+    results = [None]
+    start = 0
+    while start % kwargs['limit'] == 0 and len(results):
+      results, start = self._table.list(db.pool, 
+                                        self._owner.guid, 
+                                        self._owner._ctx, 
+                                        **kwargs)
+      if len(results):
+        yield results
+      else:
+        raise StopIteration
+    raise StopIteration
+
+
+  def add(self, value, **kwargs):
+    stored = self._dh_cls(self.add(db.pool,
+                                   self._owner.guid,
+                                   self._dh_cls._ctx,
+                                   value, **kwargs))
+    if stored:
+      return self._dh_cls()
+
+
+class AliasCollection(Collection):
+  add = alias.set
+
+
+class NameCollection(Collection):
+  add = name.create
+
+
+class RelCollection(Collection):
+  _guid_cls_str = None
+
+
+  @property
+  def _guid_cls(self):
+    return type(self._owner).__metaclass__.name_to_cls(self._guid_cls_str)
+
+
+  def _wrap_result(self, result, nodes=False, **kwargs):
+    if nodes:
+      return (self._dh_cls(result[0]), self._guid_cls(result[1]))
+    return self._dh_cls(result)
+
+
+  def _list(self, nodes=False, **kwargs):
+    for rel_set in super(RelCollection, self)._list(**kwargs):
+      nid_ctx_pairs = [(rel['rel_id'], self._dh_cls._ctx) for rel in rel_set]
+      for idx, node in enumerate(node.batch_get(db.pool, nid_ctx_pairs, **kwargs)):
+        yield rel_set[idx], node
+
+
+  def add(self, dh_instance, directed=False, **kwargs):
+    if not directed:
+      relation.create(db.pool, self._dh_cls._ctx, dh_instance.guid, self._owner.guid, **kwargs)
+    return self._dh_cls(relation.create(db.pool, 
+                                        self._dh_cls._ctx
+                                        self._owner.guid, 
+                                        dh_instance.guid, **kwargs))
+
+
+class DHAlias(DHLookupDict):
   _table = alias
 
 
-class DatahogName(dh.DatahogLookupDict):
+class DHName(DHLookupDict):
   _table = name
     
 
-class DatahogProp(dh.DatahogValueDict, dh.DatahogBaseIdDict):
+class DHProp(DHValueDict, DHBaseIdDict):
   _table = prop
 
   def __init__(self, **kwargs):
@@ -323,5 +362,109 @@ class DatahogProp(dh.DatahogValueDict, dh.DatahogBaseIdDict):
 
 
   def save(self):
-    # TODO any reason props don't support the _missing pattern in set?
+    # TODO travis, any reason props don't support the _missing pattern in set?
     return prop.set(db.pool, self._base_id, self._ctx, self)
+
+
+class DHFlags(object):
+  def __init__(self, fields):
+    self._dirty_mask = 0
+    self._fields = fields
+
+  @property
+  def _fields(self):
+    return self._owner.flags._fields
+  
+
+  @property
+  def _int_value(self):
+    return self._owner._dh['flags']
+
+
+  @_value.setter
+  def _int_value(self, val):
+    self._owner._dh['flags'] = val
+
+
+  @staticmethod
+  def _mask_for_range(r):
+    return ((2 ** (r[1] - r[0])) - 1) << r[0]
+
+
+  def __setattr__(self, name, value):
+    if name.startswith('_'):
+      return super(DHFlags, self).__setattr__(name, value)
+
+    if name in self._fields:
+      return self._set_flag(name, value)
+    
+    super(DHFlags, self).__setattr__(name, value)
+
+
+  def __getattr__(self, name):
+    if name.startswith('_'):
+      return self.__dict__[name]
+
+    if name not in self._fields:
+      raise AttributeError
+
+    flag_def = self._fields[name]
+    bit_range = (self._flag_idxs[name], self._fields[name].size)
+    int_val = self._value & self._mask_for_range(bit_range) >> bit_range[0]
+    
+    if isinstance(flag_def, fields.flag.enum):
+      return flag_def.enum_strs[int_val]
+
+    if isinstance(flag_def, fields.flag.bool):
+      return bool(int_val)
+
+    return int_val
+
+
+  def _set_flag(self, flag_name, value):
+    flag_def = self._fields[flag_name]
+    flag_idx_start = self._flag_idxs[flag_name]
+    flag_idx_end = flag_idx_start + flag_def.size
+    mask = self._mask_for_range((flag_idx_start, flag_idx_end))
+    
+    if isinstance(flag_def,  fields.flag.enum):
+      try:
+        int_value = enum_strs.index(value)    
+      except ValueError:
+        raise exc.UnknownFlagsEnumValue(name, value, enum_strs)
+
+    int_value = int(value)
+    if value > (mask >> bit_range[0]):
+      raise exc.FlagValueOverflow(name, value)
+
+    # clear the range
+    self._value &= ~mask
+
+    # set the range
+    self._value |= value << bit_range[0] 
+
+    self._dirty_mask |= mask
+
+
+  def __call__(self, flag_name, value=None, **kwargs):
+    if value:
+      self._set_flag(flag_name, value)
+      self.save(**kwargs)
+    else:
+      return getattr(self, flag_name)
+
+
+  def save(self, **kwargs):
+    add = []
+    clear = []
+
+    # bin(4) -> '0b100'
+    # bin(4)[:1:-1] -> '001'
+    val_str = str(self._value)
+    for idx, bit in enumerate(bin(self._dirty_mask)[:1:-1]): 
+      if int(bit):
+        if int(val_str[idx]):
+          add.append(idx)
+        else:
+          clear.append(idx)
+      
