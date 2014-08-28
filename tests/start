@@ -1,0 +1,33 @@
+#!/bin/bash
+
+PGVERSION="9.3"
+BINDIR="/usr/lib/postgresql/$PGVERSION/bin"
+DATADIR="/var/lib/postgresql/$PGVERSION/main"
+
+if [ -z "$(ls $DATADIR)" ]; then
+    chown -R postgres:postgres $DATADIR
+    chmod -R 700 $DATADIR
+    su postgres -c "$BINDIR/initdb -E UTF8 -D $DATADIR"
+    su postgres -c "$BINDIR/pg_ctl start -D $DATADIR"
+    su postgres -c psql <<EOF
+    create role legalease with login;
+    create database legalease with owner legalease;
+    create extension if not exists fuzzystrmatch;
+EOF
+
+    su postgres -c 'psql legalease legalease' </shard.up.sql
+
+    su postgres -c "$BINDIR/pg_ctl stop -D $DATADIR"
+
+    cat >>$DATADIR/postgresql.conf <<EOF
+max_prepared_transactions = 100
+listen_addresses = '0.0.0.0'
+EOF
+
+    cat >>$DATADIR/pg_hba.conf <<EOF
+host	all	postgres	0.0.0.0/0	reject
+host	all	all		0.0.0.0/0	trust
+EOF
+fi
+
+exec su postgres -c "$BINDIR/postgres -D $DATADIR"
