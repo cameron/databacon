@@ -27,11 +27,6 @@ class FlagDefOverflow(Exception):
   message = 'The flags field is limited to 16 bits.'
 
 
-class DatahogDictCannotBeNone(Exception):
-  message = '''Either the passed datahog dict is None or creation of a new 
-  dict failed.'''
-
-
 class UnknownFlagsEnumValue(Exception):
   def __init__(self, flag_name, flag_value, enum_strs):
     self.message = '''`%s` is not in the set of defined enum values for `%s`. Defined 

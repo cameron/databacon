@@ -6,6 +6,8 @@
   * e.g.
     * `for doc_prop in user.docs.prop():`
     * `for rel, doc_props in user.docs(props=('some_prop',)):`
+* unify child iteration with name/alias/rel iteration
+
 
 ## Implementation
 *** handle flags passed at creation time ***

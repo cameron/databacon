@@ -1,140 +1,139 @@
-import functools
+import types
 
 from datahog import node, entity, alias, prop, relationship, name
 from datahog.const import storage, table, context
-import fields
-import datahog_wrappers as dhw
+
+import flags
 import exceptions as exc
 
-
-to_const = {
-  node: table.NODE,
-  entity: table.ENTITY,
-  alias: table.ALIAS,
-  prop: table.PROPERTY,
-  relationship: table.RELATIONSHIP,
-  name: table.NAME
-}
+# BLARG
+do_not_apply_metaclass = [
+  'Node', 'Entity', 'Prop', 'Alias', 'AliasRelation', 'NameRelation',
+  'Name', 'Relation', 'LookupDict', 'ValueDict', 'PosDict', 'BaseIdDict',
+  'GuidDict', 'Dict'
+]
 
 
-ctx_counter = 0
-def make_ctx(table, meta):
-  global ctx_counter
-  ctx_counter += 1
-  context.set_context(ctx_counter, to_const[table], meta)
-  return ctx_counter
+def only_for_user_defined_subclasses(mc):
+  ''' Ensures that databacon internal classes are not treated like user-defined
+  subclasses, which should generate new datahog context constants. '''
+  old__new__ = mc.__new__
+  def new__new__(mcls, name, bases, attrs):
+    if name in do_not_apply_metaclass:
+      return super(mc, mcls).__new__(mcls, name, bases, attrs)
+    return old__new__(mcls, name, bases, attrs)
+  mc.__new__ = staticmethod(new__new__)
+  return mc
 
 
-to_storage = {
-  int: storage.INT,
-  str: storage.STR,
-  unicode: storage.UTF,
-  None: storage.NULL
-}
+@only_for_user_defined_subclasses
+class DictMC(type):
+  cls_by_name = {}
+
+  to_const = {
+    node: table.NODE,
+    entity: table.ENTITY,
+    alias: table.ALIAS,
+    prop: table.PROPERTY,
+    relationship: table.RELATIONSHIP,
+    name: table.NAME
+  }
 
 
-def storage_from_schema(schema):
-  try:
-    return to_storage[schema]
-  except (KeyError, TypeError):
-    return storage.SERIAL
-
-
-to_wrapper = {
-  fields.lookup.alias: dhw.DHAlias,
-  fields.lookup.prefix: dhw.DHName,
-  fields.lookup.phonetic: dhw.DHName,
-  fields.prop: dhw.DHProp,
-  fields.relation: dhw.DHRelation,
-}
-
-to_collection = {
-  dhw.DHAlias: dhw.DHAliasCo
-}
-
-class DatahogDictMC(type):
-  name_to_cls = {} # used by relations, which are defined using string names
+  ctx_counter = 0
+  @staticmethod
+  def make_ctx(table, meta):
+    DictMC.ctx_counter += 1
+    context.set_context(DictMC.ctx_counter, DictMC.to_const[table], meta)
+    return DictMC.ctx_counter
 
 
   def __new__(mcls, name, bases, attrs):
-    if name in ('Node', 'Entity', 'Alias', 'Prop'):
-      return super(DatahogGuidDictMC, mcls).__new__(mcls, name, bases, attrs)
-
-    mcls.define_dh_ctx(name, attrs, bases[0]._table)
-    mcls.
-    cls = super(DatahogDictMC, mcls).__new__(mcls, name, bases, attrs)
-    mcls.name_to_cls[cls.__name__] = cls
+    attrs.setdefault('flags', flags.Flags())
+    attrs.setdefault('_meta', {})
+    cls = super(DictMC, mcls).__new__(mcls, name, bases, attrs)
+    mcls.define_dh_ctx(cls)
+    DictMC.cls_by_name[name] = cls
     return cls
 
 
   @classmethod
-  def define_dh_ctx(mcls, name, attrs, table, meta=None):
-    meta = {}
-    if 'parent' in attrs:
-      meta['base_ctx'] = attrs['parent']._ctx
-
-    if 'schema' in attrs:
-      meta['schema'] = attrs['schema']
-      meta['storage'] = storage_from_schema(mtea['schema'])
-
-    if 'seach_mode' in attrs:
-      meta['search'] = field.search_mode
-      meta['phonetic_loose'] = field.phonetic_loose
-
-    attrs['_ctx'] = make_ctx(table, meta)
+  def define_dh_ctx(mcls, cls):
+    setattr(cls, '_ctx', DictMC.make_ctx(cls._table, cls._meta))
 
 
-class DatahogGuidDictMC(DatahogDictMC):
-
-
+@only_for_user_defined_subclasses
+class RelationMC(DictMC):
   def __new__(mcls, name, bases, attrs):
-    ''' Does all the magic that makes a user-defined subclass of Node
-    or Entity behave like well-defined datahog contexts.'''
+    if not isinstance(attrs['_rel_cls_str'], str):
+      raise TypeError("relation expects a string class name.")
+    return super(RelationMC, mcls).__new__(mcls, name, bases, attrs)
 
-    if name in ('Node', 'Entity'):
-      return super(DatahogGuidDictMC, mcls).__new__(mcls, name, bases, attrs)
 
-    mcls.make_field_classes(name, attrs)
-    return super(DatahogGuidDictMC, mcls).__new__(mcls, name, bases, attrs)
+class ValueDictMC(DictMC):
+
+  to_storage = {
+    int: storage.INT,
+    str: storage.STR,
+    unicode: storage.UTF,
+    None: storage.NULL
+  }
 
 
   @staticmethod
-  def make_field_classes(cls_name, attrs):
-    ''' Transform field.* classes, which are used by the user to define
-    field types on their custom classes, into dhw.DH* classes, which encapsulate
-    datahog objects and methods. '''
-    attrs['_dh_fields'] = {}
-
-    def fields():
-      for key, val in attrs.iteritems():
-        if isinstance(val, fields.Field):
-          yield name, field
-
-    for name, field in fields():
-      field_cls_base = to_wrapper[type(field)]
-      field_cls_name = cls_name + field_cls_base.__name__
-      field_cls = type(field_cls_name, (field_cls_base,), field.__dict__)
-      if issubclass(field_cls, (dhw.Alias, dhw.Name, dhw.Relation)):
-        collection_cls = to_collection[field_cls]
-        # RESUME setting up colleciton classes
-      attrs['_dh_fields'][name] = field_cls
+  def _storage_from_schema(schema):
+    try:
+      return ValueDictMC.to_storage[schema]
+    except (KeyError, TypeError):
+      return storage.SERIAL
 
 
-class DatahogNodeDictMC(DatahogGuidDictMC):
+  @classmethod
+  def define_dh_ctx(mcls, cls):
+    cls._meta['storage'] = ValueDictMC._storage_from_schema(cls.schema)
+    if cls.schema and cls._meta['storage'] == storage.SERIAL:
+      cls._meta['schema'] = cls.schema
+    super(ValueDictMC, mcls).define_dh_ctx(cls)
+
+
+@only_for_user_defined_subclasses
+class GuidMC(DictMC):
+  def __new__(mcls, name, bases, attrs):
+    cls = super(GuidMC, mcls).__new__(mcls, name, bases, attrs)
+    if hasattr(cls, 'flags'):
+      cls.flags.freeze(cls._ctx)
+    for attr, val in attrs.iteritems():
+      if hasattr(val, '_ctx') and isinstance(val.flags, flags.Flags):
+        val.flags.freeze(val._ctx)
+    return cls
+
+
+@only_for_user_defined_subclasses
+class NodeMC(ValueDictMC, GuidMC):
+
+  @classmethod
+  def define_dh_ctx(mcls, cls):
+    if cls.parent is not None:
+      cls._meta['base_ctx'] = cls.parent._ctx
+    return super(NodeMC, mcls).define_dh_ctx(cls)
 
 
   def __new__(mcls, name, bases, attrs):
-    ''' Enforce that Node subclasses Node have a valid parent property.'''
-
     args = [name, bases, attrs]
-
-    if name == 'Node':
-      return super(DatahogNodeDictMC, mcls).__new__(mcls, *args)
 
     if not has_ancestor_named(attrs['parent'], ('Node', 'Entity')):
       raise exc.InvalidParentType(*args)
 
-    return super(DatahogNodeDictMC, mcls).__new__(mcls, *args)
+    return super(NodeMC, mcls).__new__(mcls, *args)
+
+
+class FlaggedCollectionMC(type):
+  # TODO
+  def __new__(mcls, name, bases, attrs):
+    cls = attrs.get('_dh_cls', None)
+    if cls:
+      attrs['flags'] = attrs['_dh_cls'].flags
+    return super(FlaggedCollectionMC, mcls).__new__(mcls, name, bases, attrs)
 
 
 def has_ancestor_named(classes, names):
@@ -148,3 +147,5 @@ def has_ancestor_named(classes, names):
       return True
     bases.extend(list(base.__bases__))
   return False
+
+
