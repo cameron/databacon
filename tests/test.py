@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 
 import time
 import random
@@ -5,12 +6,13 @@ import random
 import mummy
 import databacon as db
 
-# TODONT
+# Extremely rudimentary tests to drive databacon API development
+
 db.connect({
   'shards': [{
     'shard': 0,
     'count': 4,
-    'host': '10.2.2.2',
+    'host': '12.12.12.12',
     'port': '5432',
     'user': 'legalease',
     'password': '',
@@ -29,7 +31,7 @@ class User(db.Entity):
   # flags.alternate_corpus_count = db.flag.int(200) # 200 being the max val
 
   username = db.lookup.alias()
-  emails = db.lookup.alias(plural=True)
+  emails = db.lookup.alias()
   emails.flags.verification_status = db.flag.enum('unsent', 
                                                   'sent', 
                                                   'resent',
@@ -72,12 +74,12 @@ class Term(db.Node):
   schema = int # number of docs in the corpus that include this term
   string = db.lookup.alias()
 
-  # define an accessor for an existing relationship context
+  # define an accessor for the existing relationship (defined above)
   docs = db.relation(Doc.terms) 
 
   # It's conceivable that you would want to have multiple kinds of relationships
   # between two classes. E.g., people might be both friends and neighbors.
-  different_docs = db.relation(Doc)
+  special_docs = db.relation(Doc)
 
 
 uniq = lambda string: string + '%s-%s' % (time.time(), random.random())
@@ -150,17 +152,13 @@ user2 = User(flags=user_flags)
 ###
 
 # Singular Alias/Name
-username = user0.username() 
+username = user0.username()
 username.value = uniq("cam")
 username.save()
 
-# More concisely (includes call to .save())
-new_name = uniq("camcam")
-user0.username(new_name) # replaces the old value because username is defined
-                         # as a singular alias
-
 # Lookup user by username (datahog alias)
-assert User.by_username(new_name).guid == user0.guid
+# TODO
+# assert User.by_username(new_name).guid == user0.guid
 
 # Lookup document by title (datahog name)
 doc0.title('porcine storage mechanisms, or, pig pens')
@@ -243,3 +241,4 @@ for doc_term_rel in term.docs():
 # Lookup incoming relationships and nodes
 for doc, doc_term_rel in term.docs(nodes=True):
   assert doc.guid == doc0.guid
+#

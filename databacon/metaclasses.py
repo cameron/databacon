@@ -1,3 +1,10 @@
+# metaclasses.py
+#
+# Responsible for taking a user-defined subclass of databacon.Entity/Node,
+# creating the appropriate datahog context values, and returning 
+# a class that behaves as specified.
+
+
 import types
 
 from datahog import node, entity, alias, prop, relationship, name
@@ -6,17 +13,18 @@ from datahog.const import storage, table, context
 import flags
 import exceptions as exc
 
-# BLARG
-do_not_apply_metaclass = [
-  'Node', 'Entity', 'Prop', 'Alias', 'AliasRelation', 'NameRelation',
-  'Name', 'Relation', 'LookupDict', 'ValueDict', 'PosDict', 'BaseIdDict',
-  'GuidDict', 'Dict'
-]
-
 
 def only_for_user_defined_subclasses(mc):
   ''' Ensures that databacon internal classes are not treated like user-defined
   subclasses, which should generate new datahog context constants. '''
+
+  # BLARG
+  do_not_apply_metaclass = [
+    'Node', 'Entity', 'Prop', 'Alias', 'AliasRelation', 'NameRelation',
+    'Name', 'Relation', 'LookupDict', 'ValueDict', 'PosDict', 'BaseIdDict',
+    'GuidDict', 'Dict'
+  ]
+
   old__new__ = mc.__new__
   def new__new__(mcls, name, bases, attrs):
     if name in do_not_apply_metaclass:
@@ -49,17 +57,17 @@ class DictMC(type):
 
 
   def __new__(mcls, name, bases, attrs):
-    attrs.setdefault('flags', flags.Flags())
+    attrs.setdefault('flags', flags.Layout())
     attrs.setdefault('_meta', {})
     cls = super(DictMC, mcls).__new__(mcls, name, bases, attrs)
-    mcls.define_dh_ctx(cls)
     DictMC.cls_by_name[name] = cls
     return cls
 
 
   @classmethod
   def define_dh_ctx(mcls, cls):
-    setattr(cls, '_ctx', DictMC.make_ctx(cls._table, cls._meta))
+    ctx = DictMC.make_ctx(cls._table, cls._meta)
+    setattr(cls, '_ctx', ctx)
 
 
 @only_for_user_defined_subclasses
@@ -71,7 +79,6 @@ class RelationMC(DictMC):
 
 
 class ValueDictMC(DictMC):
-
   to_storage = {
     int: storage.INT,
     str: storage.STR,
@@ -82,6 +89,7 @@ class ValueDictMC(DictMC):
 
   @staticmethod
   def _storage_from_schema(schema):
+    ''' Map python types to datahog storage constants. '''
     try:
       return ValueDictMC.to_storage[schema]
     except (KeyError, TypeError):
@@ -100,11 +108,21 @@ class ValueDictMC(DictMC):
 class GuidMC(DictMC):
   def __new__(mcls, name, bases, attrs):
     cls = super(GuidMC, mcls).__new__(mcls, name, bases, attrs)
+    mcls.define_dh_ctx(cls)
+
     if hasattr(cls, 'flags'):
       cls.flags.freeze(cls._ctx)
+
     for attr, val in attrs.iteritems():
-      if hasattr(val, '_ctx') and isinstance(val.flags, flags.Flags):
+
+      # define datahog contexts for each prop/rel/alias/name
+      if hasattr(val, '_ctx') and val._ctx == None:
+        val._meta['base_ctx'] = cls._ctx
+        val.__metaclass__.define_dh_ctx(val)
+
+      if hasattr(val, '_ctx') and isinstance(val.flags, flags.Layout):
         val.flags.freeze(val._ctx)
+
     return cls
 
 
@@ -128,7 +146,6 @@ class NodeMC(ValueDictMC, GuidMC):
 
 
 class FlaggedCollectionMC(type):
-  # TODO
   def __new__(mcls, name, bases, attrs):
     cls = attrs.get('_dh_cls', None)
     if cls:

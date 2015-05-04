@@ -1,3 +1,8 @@
+# fields.py
+# 
+# Methods for defining datahog types (flags, relationships, properties, aliases,
+# and names) as methods on databacon classes. 
+
 import math
 import functools
 
@@ -7,6 +12,7 @@ from mummy.schemas import _validate_schema
 import metaclasses
 import datahog_wrappers as dhw
 import flags
+
 
 _cls_id = 0
 def _subclass(base, attrs):
@@ -39,16 +45,16 @@ def relation(target, directed=None):
   return _subclass(dhw.Relation.collection, {'_dh_cls': cls})
 
 
-def _lookup(plural=False, _kind=dhw.Alias, _search_mode=None, loose=None):
+def _lookup(plural=False, _kind=None, _search_mode=None, loose=None):
   meta = {'search': _search_mode, 'phonetic_loose': loose}
-  cls = _subclass(_kind, {'meta': meta})
+  cls = _subclass(_kind, {'_meta': meta})
   if plural:
     return _subclass(_kind.collection, {'_dh_cls': cls})
   return cls
 
 
 class lookup(object):
-  alias = staticmethod(_lookup)
+  alias = staticmethod(functools.partial(_lookup, _kind=dhw.Alias))
   prefix = staticmethod(
     functools.partial(_lookup, _kind=dhw.Name, _search_mode=search.PREFIX))
   phonetic = staticmethod(
