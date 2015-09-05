@@ -5,6 +5,7 @@
 
 import math
 import functools
+import inspect
 
 from datahog.const import search
 from mummy.schemas import _validate_schema
@@ -14,42 +15,48 @@ import datahog_wrappers as dhw
 import flags
 
 
-_cls_id = 0
-def _subclass(base, attrs):
-  ''' Solely to ensure uniqueness. '''
-  global _cls_id
-  _cls_id += 1
-  return type('%s-%s' % (base.__name__, _cls_id), (base,), attrs)
+__all__ = ['prop', 'relation', 'lookup', 'children']
+
+
+subcls_id_ctr = 0
+def subclass(base, attrs=None):
+  return type('%s-rename-%s' % (base.__name__, subcls_id_ctr), (base,), attrs or {})
 
 
 def prop(schema):
   if not _validate_schema(schema):
     raise TypeError("prop expects a valid mummy schema")
-  return _subclass(dhw.Prop, {'schema': schema})
+  return subclass(dhw.Prop, {'schema': schema})
 
 
-def relation(target, directed=None):
-  # accessor for an existing relationship
-  if isinstance(target, dhw.Relation.collection):
-    if directed:
-      raise Exception("Cannot redefine directedness for an existing relation.")
-    coll_cls = target
-    if coll_cls.directed:
-      coll_cls = _subclass(coll_cls, {'directed': not coll_cls.directed})
-    return coll_cls
+def relation(target):
+  cls = None
+  list_cls = dhw.Relation.List
+  # `target` is a reference to a previously-defined relationship, e.g.:
+  #   `brothers = db.relation(Brother.sisters)`
+  if inspect.isclass(target) and issubclass(target, dhw.Relation.List):
+      cls = subclass(target.of_type, {'forward': False})
+      list_cls = target
+  # `target` is a string reference to a later-defined class, e.g.:
+  #   `brothers = db.relation('Brother')`
+  elif isinstance(target, str):
+    cls = subclass(dhw.Relation)
+    metaclasses.rels_pending_cls.setdefault(target, []).append(cls)
 
-  # create a new relationship context
-  cls_str = isinstance(target, str) and target or target.__name__
-  attrs = {'_rel_cls_str': cls_str, 'directed': directed}
-  cls = _subclass(dhw.Relation, attrs)
-  return _subclass(dhw.Relation.collection, {'_dh_cls': cls})
+  # `target` is a reference to a user-defined sublcass of dhw.GuidDict, e.g.:
+  #   `brothers = db.relation(Brother)`
+  else:
+    cls = target
+
+  cls = subclass(list_cls, {'of_type': cls})
+  return cls
 
 
 def _lookup(plural=False, _kind=None, _search_mode=None, loose=None):
   meta = {'search': _search_mode, 'phonetic_loose': loose}
-  cls = _subclass(_kind, {'_meta': meta})
+  cls = subclass(_kind, {'_meta': meta})
   if plural:
-    return _subclass(_kind.collection, {'_dh_cls': cls})
+    cls = subclass(cls.List, {'of_type': cls})
   return cls
 
 
@@ -61,5 +68,10 @@ class lookup(object):
     functools.partial(_lookup, _kind=dhw.Name, _search_mode=search.PHONETIC))
 
 
-def children(child_cls_name):
-  return _subclass(dhw.ChildCollection, {'_dh_cls_str': child_cls_name})
+def children(child_cls):
+  attrs = {}
+  if inspect.isclass(child_cls):
+    attrs['of_type'] = child_cls
+  elif isinstance(child_cls, str):
+    attrs['_pending_cls_name'] = child_cls
+  return subclass(dhw.Node.List, attrs)

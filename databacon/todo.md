@@ -9,14 +9,10 @@
 * unify child iteration with name/alias/rel iteration
 
 
-## Implementation
-*** handle flags passed at creation time ***
-* class lookup methods (alias, name, id)
-* store datahog meta context info in datahog to allow extension of schema
-* collection subclass creation and instantiation (for name/alias/rel)
-* directed and undirected relationships (e.g., updating 2 sets of flags for undirected)
+# Wish List
 
-# Stretch Goals
-
+* tree-scaling + rebalancing
+* backups + failover
+* failed node txn cleanup
 * m:n relationships
-* futures
+* futures / dep graph

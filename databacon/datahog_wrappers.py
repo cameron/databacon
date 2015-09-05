@@ -1,4 +1,5 @@
 import math
+import functools
 
 from datahog import node, entity, alias, name, prop, relationship
 
@@ -10,15 +11,17 @@ from flags import Flags
 _no_arg = {}
 
 class Dict(object):
-  ''' base class for all classes that wrap datahog dicts, stored at `self._dh`
+  ''' base class for all classes that wrap datahog dicts, which are 
+  stored at `self._dh`.
   
   all datahog objects share a flags attr and a remove method. they all also
   have a context value (a type identifier defined by databacon), and a table
   (e.g., node).
 
-  subsets of datahog objects have other shared attrs and methods, which you will 
-  find handled in subclases below.
+  subsets of datahog objects have other shared attrs and methods, which are
+  handled in subclases below.
   '''
+
   _table = None
   _ctx = None 
   _remove_arg_strs = None 
@@ -28,8 +31,16 @@ class Dict(object):
   def __init__(self, flags=None, dh=None):
     self._dh = dh or {}
     self.flags = flags or Flags(self)
-
+    self.__ctx = None
         
+  @property
+  def _ctx(self):
+    return self.__ctx
+
+  @_ctx.setter
+  def _ctx(self, ctx):
+    self.__ctx = ctx
+
   @property
   def _id_args(self):
     return [self._dh[key] for key in self._id_arg_strs]
@@ -47,7 +58,7 @@ class Dict(object):
   
   @classmethod
   def _cls_by_name(cls, cls_name):
-    return cls.__metaclass__.cls_by_name[cls_name]
+    return cls.__metaclass__.user_cls_by_name[cls_name]
 
   
   def save_flags(self, add, clear, **kw):
@@ -55,65 +66,55 @@ class Dict(object):
     self._table.set_flags(*args, **_dhkw(kw))
 
 
-class Collection(object):
-  _page_size = 100
-  _dh_cls = None # a subclass of relation, alias, name, or node (not prop)
+class List(object):
+  __metaclass__ = metaclasses.ListMC
+  default_page_size = 100
+  of_type = None
 
-  
-  def __init__(self, owner):
+
+  def __init__(self, owner, *args, **kw):
     self._owner = owner
+    super(List, self).__init__(*args, **kw)
 
 
   def __getitem__(self, idx):
     return self._wrap_result(
-      self._get_item(
-        db.pool, self._owner.guid, self._owner._ctx, start=idx, limit=1, 
-        **kw))
+      self._get_page(
+        db.pool, self._owner.guid, self.of_type._ctx, start=idx, limit=1)[0][0])
 
 
   def __call__(self, **kw):
     kw.setdefault('start', 0)
-    kw.setdefault('limit', self._page_size)
+    kw.setdefault('limit', self.default_page_size)
     for page, offset in self._pages(**kw):
       for result in page:
         yield self._wrap_result(result, **kw)
 
 
   def _wrap_result(self, result, **kw):
-    return self._dh_cls(dh=result)
-
-
-  def _get_item(self, *args, **kw):
-    pass
+    return self.of_type(dh=result, owner=self._owner)
 
 
   def _get_page(self, *args, **kw):
-    return self._dh_cls._table.list(*args, **_dhkw(kw))
+    return self.of_type._table.list(*args, **_dhkw(kw))
 
 
   def _pages(self, **kw):
     results = [None]
-    start = 0
-    while start % kw['limit'] == 0 and len(results):
-      results, start = self._get_page(
-        db.pool, self._owner.guid, self._dh_cls._ctx, **kw)
+    offset = 0
+    while offset % kw['limit'] == 0 and len(results):
+      results, offset = self._get_page(
+        db.pool, self._owner.guid, self.of_type._ctx, **kw)
       if len(results):
-        yield results, start
+        yield results, offset
       else:
         raise StopIteration
     raise StopIteration
 
 
-  def add(self, value, **kw):
-    stored = self._dh_cls(self.add( # TODO
-      db.pool, self._owner.guid, self._dh_cls._ctx, value, **_dhkw(kw)))
-    if stored:
-      # TODO
-      return self._dh_cls()
+  def add(self, value, flags=None, **kw):
+    return self._add(db.pool, self._owner.guid, self.of_type._ctx, value, flags=flags._flags_set, **_dhkw(kw))
 
-
-class FlaggedCollection(Collection):
-  __metaclass__ = metaclasses.FlaggedCollectionMC
 
 
 class ValueDict(Dict):
@@ -122,6 +123,15 @@ class ValueDict(Dict):
   __metaclass__ = metaclasses.ValueDictMC
   schema = None
 
+
+  @classmethod
+  def default_value(self):
+    return ({
+      int: 0,
+      str: '',
+      type(None): None,
+    }).get(type(self.schema) is type and self.schema or type(self.schema), {})
+    
 
   @property
   def value(self):
@@ -133,12 +143,21 @@ class ValueDict(Dict):
     self._dh['value'] = value
 
 
-  def __call__(self, value=_no_arg, **kwargs):
-    if value is  _no_arg:
+  def __call__(self, value=_no_arg, flags=None, **kwargs):
+    if value is _no_arg:
+      # TODO test this case
       self._dh = self._get(**kwargs)
       return self
+
     self.value = value
     self.save()
+    
+    if flags:
+      # TODO this feels super gross
+      self.flags = flags
+      self._dh['flags'] = flags._tmp_set
+      self.flags._owner = self
+      self.flags.save()
 
 
   def increment(self, **kw):
@@ -146,8 +165,8 @@ class ValueDict(Dict):
       raise exc.CannotIncrementNonnumericValue()
     
     args = self._id_args + [self._ctx]
-    new_val = self._table.increment(db.pool, *args, **_dhw(kw))
-    if new_val is none:
+    new_val = self._table.increment(db.pool, *args, **_dhkw(kw))
+    if new_val is None:
       raise exc.DoesNotExist(self)
     self.value = new_val
     return self
@@ -164,12 +183,12 @@ class GuidDict(Dict):
 
   def __init__(self, flags=None, dh=None):
     super(GuidDict, self).__init__(flags=flags, dh=dh)
-    self._init_dh_fields()
+    self._instantiate_attr_classes()
 
 
-  def _init_dh_fields(self):
+  def _instantiate_attr_classes(self):
     for attr, val in [(a, getattr(self, a)) for a in dir(self) if '_' not in a]:
-      if isinstance(val, type) and issubclass(val, (Dict, Collection)):
+      if isinstance(val, type) and issubclass(val, (Dict, List)):
         self.__dict__[attr] = val(owner=self)
 
 
@@ -178,6 +197,7 @@ class GuidDict(Dict):
     return self._dh['guid']
 
 
+  # TODO merge with the child accessors / lists?
   def children(self, child_cls, **kw):
     children, offset = node.get_children(db.pool,
                                          self.guid,
@@ -188,7 +208,7 @@ class GuidDict(Dict):
 
   @classmethod
   def by_guid(cls, ids, **kw):
-    # TODO look into merging logic with collections
+    # TODO merge with lists?
     if hasattr(ids, '__contains__'):
       dh_dicts = cls._table.batch_get(db.pool, 
                            [(id,cls._ctx) for id in ids], 
@@ -199,19 +219,23 @@ class GuidDict(Dict):
     
 
 class PosDict(Dict):
+
+
   def shift(self, *args, **kw):
-    table = kw.get('table', self._table)
-    args = [db.pool] + self._id_args + [self._ctx] + args
+    table = kw.get('table', self._table) # TODO necessary?
+    args = [db.pool] + self._id_args + [self._ctx] + list(args)
     return table.shift(*args, **_dhkw(kw))
     
 
 class BaseIdDict(PosDict):
   _id_arg_strs = ('base_id',)
-
+  base_cls = None
+  
 
   def __init__(self, owner=None, dh=None):
     self._owner = owner
-    super(BaseIdDict, self).__init__(dh)
+    dh = dh or {'base_id': owner.guid}
+    super(BaseIdDict, self).__init__(dh=dh)
 
 
   @property
@@ -224,74 +248,89 @@ class Relation(BaseIdDict):
   _id_arg_strs = ('base_id', 'rel_id')
   _table = relationship
   _rel_cls_str = None
+  forward = True
+  rel_cls = None
 
+#  @classmethod
+#  def __name__(self):
+    # TODO this needs uniqification along with the relationship instantiation
+#    return 'Relation.%s-%s' % (from_cls.__name__, _rel_cls_str)
 
   @property
   def rel_id(self):
     return self._dh['rel_id']
 
 
-  def shift(self, index, **kw):
-    table = (forward and self._to_cls or self._from_cls)._table
-    super(Relation, self).shift(forward, index, table=table, **kw)
-
-
   @property
-  def rel_cls(self):
-    return self._cls_by_name[self._rel_cls_str]
+  def base_id(self):
+    return self._dh['base_id']
+
+
+  def shift(self, index, **kw):
+    super(Relation, self).shift(self.forward, index, **kw)
 
 
   def node(self, **kw):
-    return self.rel_cls(
-      self.rel_cls._table.get(
-        db.pool, 
-        self.rel_id,
-        self._ctx, **_dhkw(kw)))
+    if self.forward:
+      guid, cls = self.rel_id, self.rel_cls
+    else:
+      guid, cls = self.base_id, self.base_cls
+    return cls(dh=cls._table.get(
+      db.pool, 
+      guid,
+      cls._ctx, **_dhkw(kw)))
 
 
-  class collection(FlaggedCollection):
-    _guid_cls_str = None
-    directed = False
-    forward = True
-
-    @property
-    def _guid_cls(self):
-      return self._owner.cls_by_name(self._guid_cls_str)
+  class List(List):
 
 
     def _wrap_result(self, result, nodes=False, **kw):
       if nodes:
-        return (self._dh_cls(dh=result[0]), self._guid_cls(dh=result[1]))
-      return self._dh_cls(result)
+        return (self.of_type(dh=result[0], owner=self._owner), 
+                self.of_type.base_cls(dh=result[1], owner=self._owner))
+      return self.of_type(dh=result, owner=self._owner)
 
 
     def _pages(self, nodes=False, **kw):
-      for page in super(RelCollection, self)._pages(**kw):
-        if not nodes:
-          yield page
+      for page, offset in super(Relation.List, self)._pages(**kw):
+        if nodes:
+          if self.of_type.forward:
+            id_key, ctx = 'rel_id', self.of_type.rel_cls._ctx
+          else:
+            id_key, ctx = 'base_id', self.of_type.base_cls._ctx
+          nid_ctx_pairs = [(rel[id_key], ctx) for rel in page]
+          yield (zip(page, node.batch_get(
+            db.pool, nid_ctx_pairs, timeout=kw.get('timeout', None))), offset)
         else:
-          nid_ctx_pairs = [(rel['rel_id'], self._dh_cls._ctx) for rel in page]
-          yield zip(page, node.batch_get(
-            db.pool, nid_ctx_pairs, **_dhkw(kw)))
+          yield page, offset
 
 
-    def add(self, dh_instance, directed=False, **kw):
-      if not directed:
-        relation.create(
-          db.pool, self._dh_cls._ctx, dh_instance.guid, self._owner.guid, 
-          **_dhkw(kw))
-      return self._dh_cls(relation.create(
-        db.pool, self._dh_cls._ctx, self._owner.guid, dh_instance.guid, 
-        **_dhkw(kw)))
+    def _get_page(self, *args, **kw):
+      kw['forward'] = self.of_type.forward
+      return super(Relation.List, self)._get_page(*args, **kw)
 
+
+    def add(self, dh_instance, flags=None, **kw):
+      if self.of_type.forward:
+        base_id, rel_id = self._owner.guid, dh_instance.guid
+      else:
+        base_id, rel_id = dh_instance.guid, self._owner.guid
+      return relationship.create(db.pool, 
+                                 self.of_type._ctx,
+                                 base_id,
+                                 rel_id,
+                                 flags=flags and flags._flags_set or None,
+                                 **_dhkw(kw))
 
 
 class LookupDict(BaseIdDict, ValueDict):
   _remove_args = ('value',)
 
-  # is this appropriate? don't see schema in travis's test_name
-#  schema = str
+  # is this schema appropriate? don't see schema in travis's test_name
+  # possible that it's part of the user-facing API?
+  # schema = str
 
+  # TODO why is this here and not shared with prop (if not also value? rel?)
   def save_flags(self, add, clear, **kw):
     self._table.set_flags(
       db.pool, self._id_args, self.value, add, clear, 
@@ -314,14 +353,18 @@ class Node(GuidDict, ValueDict, PosDict):
   _table = node
   _remove_arg_strs = ('base_id',)
   _save = node.update
-
   parent = None 
 
 
   def __init__(self, parent=None, value=None, dh=None, **kw):
     self.parent = parent
-    super(Node, self).__init__(
-      dh=dh or node.create(db.pool, parent.guid, self._ctx, value, **_dhkw(kw)))
+    if not dh:
+      dh = node.create(db.pool, 
+                       parent.guid,
+                       self._ctx,
+                       value or self.default_value(),
+                       **_dhkw(kw))
+    super(Node, self).__init__(dh=dh)
 
 
   def move(self, new_parent, **kw):
@@ -344,52 +387,48 @@ class Node(GuidDict, ValueDict, PosDict):
     return result
 
 
-class ChildCollection(Collection):
-  _dh_cls_str = None
+  class List(List):
+    def _get_page(self, *args, **kw):
+      return node.get_children(*args, **_dhkw(kw))
 
-  
-  @property
-  def _dh_cls(self):
-    return self._owner._cls_by_name(self._dh_cls_str)
-
-  def _get_page(self, *args, **kw):
-    return node.get_children(*args, **_dhkw(kw))
-
-
-  def list(self, **kw):
-    raise NotImplemented("Waiting on a use case to motivate API design")
+    @property
+    def flags(self):
+      raise AttributeError
 
 
 class Alias(LookupDict):
   _table = alias
   _fetched_value = None
 
-  class collection(FlaggedCollection):
-    add = alias.set
+
+  class List(List):
+    def _add(self, *args, **kwargs):
+      return alias.set(*args, **kwargs)
 
 
   def _get(self, **kw):
     aliases = alias.list(db.pool, self.base_id, self._ctx, **_dhkw(kw))[0]
     if not aliases:
-      return {'base_id': self.base_id}
+      return {'base_id': self.base_id} # TODO can we avoid this?
     self._fetched_value = aliases[0]['value'] # for remove during save
     return aliases[0]
 
 
   def save(self, **kw):
+    # Q: does this need some dirty-checking logic?
     if self._fetched_value:
       alias.remove(
         db.pool, self.base_id, self._ctx, self._fetched_value, **_dhkw(kw))
     alias.set(db.pool, self.base_id, self._ctx, self.value, **_dhkw(kw))
 
 
+
+
 class Name(LookupDict):
   _table = name
 
-
-  class collection(FlaggedCollection):
+  class List(List):
     add = name.create
-
 
   def save(self, **kw):
     # it might happen that the user saves before fetching, 
@@ -430,9 +469,9 @@ class Prop(ValueDict, BaseIdDict):
 
   def save(self):
     # TODO travis, any reason props don't support the _missing pattern in set?
-    return prop.set(db.pool, self._base_id, self._ctx, self)
+    return prop.set(db.pool, self.base_id, self._ctx, self.value)
 
 
-_allowed = ['timeout', 'forward_index', 'reverse_index', 'by', 'index', 'limit', 'start']
+_allowed = ['timeout', 'forward_index', 'reverse_index', 'by', 'index', 'limit', 'start', 'forward']
 def _dhkw(kw):
   return dict((k, v) for k,v in kw.iteritems() if k in _allowed)
