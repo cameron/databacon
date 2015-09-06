@@ -189,6 +189,8 @@ for email in user0.emails():
 # Property
 pass_flags = User.password.flags(two_factor=True)
 user0.password('new_password', flags=pass_flags)
+assert user0.password().value == 'new_password'
+
 user0.password('newer_password') # replaces 'new_password'
 pw = user0.password() # fetch it fresh
 assert pw.value == 'newer_password'
