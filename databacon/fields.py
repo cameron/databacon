@@ -20,6 +20,8 @@ __all__ = ['prop', 'relation', 'lookup', 'children']
 
 subcls_id_ctr = 0
 def subclass(base, attrs=None):
+  global subcls_id_ctr
+  subcls_id_ctr += 1
   return type('%s-rename-%s' % (base.__name__, subcls_id_ctr), (base,), attrs or {})
 
 
@@ -32,11 +34,13 @@ def prop(schema):
 def relation(target):
   cls = None
   list_cls = dhw.Relation.List
+
   # `target` is a reference to a previously-defined relationship, e.g.:
   #   `brothers = db.relation(Brother.sisters)`
   if inspect.isclass(target) and issubclass(target, dhw.Relation.List):
       cls = subclass(target.of_type, {'forward': False})
       list_cls = target
+
   # `target` is a string reference to a later-defined class, e.g.:
   #   `brothers = db.relation('Brother')`
   elif isinstance(target, str):
@@ -46,7 +50,7 @@ def relation(target):
   # `target` is a reference to a user-defined sublcass of dhw.GuidDict, e.g.:
   #   `brothers = db.relation(Brother)`
   else:
-    cls = target
+    cls = subclass(dhw.Relation, {'rel_cls': target})
 
   cls = subclass(list_cls, {'of_type': cls})
   return cls
@@ -57,6 +61,7 @@ def _lookup(plural=False, _kind=None, _search_mode=None, loose=None):
   cls = subclass(_kind, {'_meta': meta})
   if plural:
     cls = subclass(cls.List, {'of_type': cls})
+    cls.of_type.plural = cls # eww circular ref
   return cls
 
 

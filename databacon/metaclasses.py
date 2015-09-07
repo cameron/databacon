@@ -199,16 +199,20 @@ class GuidMC(DictMC):
                                      ctx_cls.__name__.split('-')[0])
         ctx_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
 
-      # Identify user-defined subclasses of datahog_wrappers.BaseIdDict
-      # (while avoiding circular imports) and then define their datahog 
-      # contexts. 
-      if hasattr(ctx_cls, '_ctx') and type(ctx_cls._ctx) == property:
+      if has_ancestor_named(ctx_cls, 'BaseIdDict'):
+        # subclasses of relation might already have a context
+        if type(ctx_cls._ctx) is int:
+          continue
+
         ctx_cls.base_cls = cls
         ctx_cls._meta['base_ctx'] = cls._ctx
 
-        # TODO? don't define a child's context twice
         ctx_cls.__metaclass__.define_dh_ctx(ctx_cls)
+
         
+        if has_ancestor_named(ctx_cls, 'LookupDict'):
+          setattr(cls, 'by_%s' % attr, ctx_cls.lookup)
+
 @only_for_user_defined_subclasses
 class NodeMC(ValueDictMC, GuidMC):
 

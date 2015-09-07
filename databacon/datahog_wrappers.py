@@ -26,7 +26,7 @@ class Dict(object):
   _ctx = None 
   _remove_arg_strs = None 
   _id_arg_strs = None
-
+  _dh = None
 
   def __init__(self, flags=None, dh=None):
     self._dh = dh or {}
@@ -178,8 +178,9 @@ class ValueDict(Dict):
 
 
 class GuidDict(Dict):
-  _id_arg_strs = ('guid', )
-
+  _id_arg_strs = ('guid',)
+  _remove_arg_strs = ('guid',)
+  
 
   def __init__(self, flags=None, dh=None):
     super(GuidDict, self).__init__(flags=flags, dh=dh)
@@ -187,7 +188,8 @@ class GuidDict(Dict):
 
 
   def _instantiate_attr_classes(self):
-    for attr, val in [(a, getattr(self, a)) for a in dir(self) if '_' not in a]:
+    attrs = [a for a in dir(self) if '__' not in a]
+    for attr, val in [(a, getattr(self, a)) for a in attrs]:
       if isinstance(val, type) and issubclass(val, (Dict, List)):
         self.__dict__[attr] = val(owner=self)
 
@@ -197,34 +199,41 @@ class GuidDict(Dict):
     return self._dh['guid']
 
 
-  # TODO merge with the child accessors / lists?
-  def children(self, child_cls, **kw):
-    children, offset = node.get_children(db.pool,
-                                         self.guid,
-                                         child_cls._ctx,
-                                         **_dhkw(kw))
-    return [child_cls(dh=n) for n in children]
+  # TODO 
+  # merge with the child accessors / lists?
+  # def children(self, child_cls, **kw):
+  #   children, offset = node.get_children(db.pool,
+  #                                        self.guid,
+  #                                        child_cls._ctx,
+  #                                        **_dhkw(kw))
+  #   return [child_cls(dh=n) for n in children]
 
 
   @classmethod
+  def _by_guid(cls, ids, **kw):
+    ids = type(ids) in (list, tuple) and ids or (ids,)
+    if type(ids[0]) not in (list, tuple):
+      ids = [(id,cls._ctx) for id in ids]
+    return cls._table.batch_get(db.pool, 
+                                ids,
+                                **_dhkw(kw))
+    
+
+  @classmethod
   def by_guid(cls, ids, **kw):
-    # TODO merge with lists?
-    if hasattr(ids, '__contains__'):
-      dh_dicts = cls._table.batch_get(db.pool, 
-                           [(id,cls._ctx) for id in ids], 
-                           **_dhkw(kw))
-      return [cls(dh=dh) for dh in dh_dicts]
+    dicts = cls._by_guid(ids, **kw)
+    if len(dicts) > 1:
+      return [cls(dh=dh) for dh in dicts]
     else:
-      return cls(cls._table.get(db.pool, ids, cls._ctx))
+      return cls(dh=dicts[0])
     
 
 class PosDict(Dict):
 
 
   def shift(self, *args, **kw):
-    table = kw.get('table', self._table) # TODO necessary?
     args = [db.pool] + self._id_args + [self._ctx] + list(args)
-    return table.shift(*args, **_dhkw(kw))
+    return self._table.shift(*args, **_dhkw(kw))
     
 
 class BaseIdDict(PosDict):
@@ -251,10 +260,6 @@ class Relation(BaseIdDict):
   forward = True
   rel_cls = None
 
-#  @classmethod
-#  def __name__(self):
-    # TODO this needs uniqification along with the relationship instantiation
-#    return 'Relation.%s-%s' % (from_cls.__name__, _rel_cls_str)
 
   @property
   def rel_id(self):
@@ -295,12 +300,16 @@ class Relation(BaseIdDict):
       for page, offset in super(Relation.List, self)._pages(**kw):
         if nodes:
           if self.of_type.forward:
-            id_key, ctx = 'rel_id', self.of_type.rel_cls._ctx
+            cls = self.of_type.rel_cls
+            id_key = 'rel_id'
           else:
-            id_key, ctx = 'base_id', self.of_type.base_cls._ctx
-          nid_ctx_pairs = [(rel[id_key], ctx) for rel in page]
-          yield (zip(page, node.batch_get(
-            db.pool, nid_ctx_pairs, timeout=kw.get('timeout', None))), offset)
+            cls = self.of_type.base_cls
+            id_key = 'base_id'
+          ctx = cls._ctx
+          id_ctx_pairs = [(rel[id_key], ctx) for rel in page]
+          timeout = kw.get('timeout')
+          guid_dicts = cls._by_guid(id_ctx_pairs, timeout=timeout)
+          yield (zip(page, guid_dicts), offset)
         else:
           yield page, offset
 
@@ -324,22 +333,24 @@ class Relation(BaseIdDict):
 
 
 class LookupDict(BaseIdDict, ValueDict):
-  _remove_args = ('value',)
+  _remove_arg_strs = ('value',)
 
   # is this schema appropriate? don't see schema in travis's test_name
   # possible that it's part of the user-facing API?
   # schema = str
 
-  # TODO why is this here and not shared with prop (if not also value? rel?)
-  def save_flags(self, add, clear, **kw):
-    self._table.set_flags(
-      db.pool, self._id_args, self.value, add, clear, 
-      **_dhkw(kw))
+  def _get(self, **kw):
+    entries = self._table.list(db.pool, self.base_id, self._ctx, **_dhkw(kw))[0]
+    if not entries:
+      return {'base_id': self.base_id}
+    self._fetched_value = entries[0]['value'] # for remove during save
+    return entries[0]
 
 
 class Entity(GuidDict):
   __metaclass__ = metaclasses.GuidMC
   _table = entity
+
 
   def __init__(self, dh=None, **kw):
     super(Entity, self).__init__(
@@ -351,12 +362,11 @@ class Entity(GuidDict):
 class Node(GuidDict, ValueDict, PosDict): 
   __metaclass__ = metaclasses.NodeMC
   _table = node
-  _remove_arg_strs = ('base_id',)
   _save = node.update
   parent = None 
 
 
-  def __init__(self, parent=None, value=None, dh=None, **kw):
+  def __init__(self, value=None, parent=None, dh=None, **kw):
     self.parent = parent
     if not dh:
       dh = node.create(db.pool, 
@@ -406,14 +416,6 @@ class Alias(LookupDict):
       return alias.set(*args, **kwargs)
 
 
-  def _get(self, **kw):
-    aliases = alias.list(db.pool, self.base_id, self._ctx, **_dhkw(kw))[0]
-    if not aliases:
-      return {'base_id': self.base_id} # TODO can we avoid this?
-    self._fetched_value = aliases[0]['value'] # for remove during save
-    return aliases[0]
-
-
   def save(self, **kw):
     # Q: does this need some dirty-checking logic?
     if self._fetched_value:
@@ -422,13 +424,24 @@ class Alias(LookupDict):
     alias.set(db.pool, self.base_id, self._ctx, self.value, **_dhkw(kw))
 
 
-
+  @classmethod
+  def lookup(cls, value, **kw):
+    dh_alias = alias.lookup(db.pool, value, cls._ctx, **_dhkw(kw))
+    if dh_alias:
+      return cls.base_cls.by_guid(dh_alias['base_id'])
 
 class Name(LookupDict):
   _table = name
 
   class List(List):
     add = name.create
+
+  @classmethod
+  def lookup(cls, value, **kw):
+    dh_names, offset = name.search(db.pool, value, cls._ctx, **_dhkw(kw))
+    if len(dh_names):
+      return cls.base_cls.by_guid([n['base_id'] for n in dh_names])
+
 
   def save(self, **kw):
     # it might happen that the user saves before fetching, 

@@ -3,108 +3,11 @@
 import time
 import random
 
-import mummy
-import databacon as db
+from schema import User, Corpus, Doc, Term
 
-# Extremely rudimentary tests to drive databacon API development
-
-db.connect({
-  'shards': [{
-    'shard': 0,
-    'count': 4,
-    'host': '12.12.12.12',
-    'port': '5432',
-    'user': 'legalease',
-    'password': '',
-    'database': 'legalease',
-  }],
-  'lookup_insertion_plans': [[(0, 1)]],
-  'shard_bits': 8,
-  'digest_key': 'super secret',
-})
-
-class User(db.Entity):
-  flags = db.flags()
-  flags.newsletter_sub = db.flag.bool(True)
-  flags.role = db.flag.enum('admin', 'staff', 'user')
-  flags.corpus_count = db.flag.int(bits=8) 
-  flags.alternate_corpus_count = db.flag.int(max_val=5) 
-
-  username = db.lookup.alias()
-  emails = db.lookup.alias(plural=True)
-  emails.flags.verification_status = db.flag.enum('unsent', 
-                                                  'sent', 
-                                                  'resent',
-                                                  'confirmed')
-
-  password = db.prop(str)
-  password.flags.two_factor = db.flag.bool(False)
-  corpora = db.children('Corpus')
+uniq = lambda s: '%s-%s-%s' % (s, time.time(), random.random())
 
 
-class Corpus(db.Node):
-  parent = User
-
-  # convenience accessor for the corpus.children(Doc) generator
-  docs = db.children('Doc')
-
-
-class Doc(db.Node):
-  parent = Corpus
-
-  flags = db.flags()
-  flags.length = db.flag.int(bits=16)
-
-  schema = {
-    'path': str,
-    mummy.OPTIONAL('top_terms'): [int]
-  }
-
-  title = db.lookup.phonetic(loose=True)
-
-  scores = db.relation('Doc') 
-  scores.flags.similarity = db.flag.int(bits=16)
-
-  terms = db.relation('Term') 
-  terms.flags.count = db.flag.int(bits=12)
-
-
-class Term(db.Node):
-  parent = Corpus
-  schema = int # number of docs in the corpus that include this term
-  string = db.lookup.alias()
-
-  # define an accessor for the already-declared relationship Doc.terms
-  docs = db.relation(Doc.terms) 
-
-  # It's conceivable that you would want to have multiple kinds of relationships
-  # between two classes. E.g., people might be both friends and neighbors, so we'll
-  # need a new rel context and relation subclass for this accessor.
-  # 
-  # TODO
-  # This is also an example of a one-sided relationship. In other words,
-  # there is no accessor on the Doc class for this relationship. One-sided
-  # relations should be declarable as below, but also using a class string, i.e.,
-  # ahead of the related class's definition, which means we'll need
-  # to check for incomplete relationships in the define_dh_ctx method of each user-
-  # defined subclass.
-  # TODO test special_docs 
-  special_docs = db.relation(Doc)
-
-
-uniq = lambda string: string + '%s-%s' % (time.time(), random.random())
-
-
-### Databacon API Notes
-#
-# - anywhere you see () or [], expect a network operation (or two, in the case
-#   of fetching related nodes with nodes=True) to occur. 
-# - anywhere you see (), you can pass datahog kwargs through to the underlying
-#   datahog call. mostly, this refers to timeout, but sometimes refers to
-#   forward_/reverse_index (relationship.create), by (prop/node.increment),
-#   index (node.move, alias.create, name.create), limit and start 
-#   (node.list/get_children, name.search/list, alias.list)
-# - do not try to bend the cache. simply realize there is no cache.
 
 ###
 ### Nodes & Entities
@@ -112,21 +15,15 @@ uniq = lambda string: string + '%s-%s' % (time.time(), random.random())
 
 # Creation
 user0 = User()
-corpus0 = Corpus(user0)
-doc0 = Doc(corpus0, {'path': '/path/to/original.file'})
+corpus0 = Corpus(parent=user0)
+doc0 = Doc({'path': '/path/to/original.file'}, parent=corpus0)
 assert user0.guid != corpus0.guid != doc0.guid != None
 
 # Fetching Child Nodes
-for child in user0.corpora():
-  assert child.guid == corpus0.guid
-
-# TODO 
-#for child in user0.children(Corpus):
-#  assert child.guid == corpus0.guid
-
-# Listing Children TODO
-#assert len(user0.list_children(Corpus)) == 1
-#assert len(user0.list_corpora()) == 1
+for corpus in user0.corpora():
+  assert corpus.guid == corpus0.guid
+  for doc in corpus.docs():
+    assert doc.guid == doc0.guid
 
 
 # Moving Child Nodes
@@ -149,11 +46,12 @@ assert fresh.flags.newsletter_sub == user0.flags.newsletter_sub
 
 # More concisely (includes a call to .save())
 user0.flags('role', 'admin') 
+assert User.by_guid(user0.guid).flags.role == 'admin'
 
 # Retrieving values
 assert user0.flags.role == user0.flags('role') == 'admin'
 
-# Passing in at obj creation (more examples of this later)
+# Passing flags at instance creation (more examples of this later)
 user_flags = User.flags(role='user')
 user2 = User(flags=user_flags)
 
@@ -162,22 +60,27 @@ user2 = User(flags=user_flags)
 ### Aliases, Names, and Properties (Singular & Plural Value Objs)
 ###
 
-# Singular Alias/Name
+# Singular Alias
 username = user0.username()
 username.value = uniq("cam")
 username.save()
 
-# Lookup user by username (datahog alias)
-# TODO
-# assert User.by_username(new_name).guid == user0.guid
+# Lookup user by alias
+assert User.by_username(username.value).guid == user0.guid
 
-# TODO
 # Lookup document by title (datahog name)
-#doc0.title('porcine storage mechanisms, or, pig pens')
-#assert Doc.by_title('porcine storage').guid == doc0.guid
+title = uniq('porcine storage mechanisms, or, pig pens')
+doc0.title(title)
+found_it = False
+for doc in Doc.by_title(title):
+  ''' Iteration here is the result of a bad habit: running the tests repeatedly
+  on the same database. '''
+  found_it = doc.guid == doc0.guid
+  if found_it:
+    break
 
 # Plural Alias/Name (& and passing flags to object creation)
-email_flags = User.emails.flags(verification_status='sent') # CONSIDER .prepareFlags() ?
+email_flags = User.emails.flags(verification_status='sent')
 address = uniq("cam@")
 user0.emails.add(address, flags=email_flags)
 
@@ -202,8 +105,8 @@ assert pw.flags.two_factor == True
 ### Relationships
 ###
 
-doc1 = Doc(corpus0, {'path': '/to/file1'})
-doc2 = Doc(corpus0, {'path': '/to/file2'})
+doc1 = Doc({'path': '/to/file1'}, parent=corpus0)
+doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
 
 # Create
 score0_int = int(.4 * Doc.scores.flags.similarity.max_val)
@@ -245,10 +148,14 @@ assert term.docs.add(doc0) == False
 # should be the same relationship
 assert term.docs[0].base_id == doc0.guid
 
-term.increment() # A term obj's int value is the denormalized count of all 
-                 # incoming document relations.
-# TODO
-# assert Term.by_string(word).value == 1
+# Per the schema, the term's int value represents a denormalized count of
+# the # of docs it has relationships with, although that logic is not actually
+# defined here.
+term.increment()
+assert Term.by_string(word).value == 1
+
+term.increment()
+assert Term.by_string(word).value == 2
 
 # Lookup incoming relationships
 for doc_term_rel in term.docs(): 
@@ -257,4 +164,36 @@ for doc_term_rel in term.docs():
 # Lookup incoming relationships and nodes
 for doc_term_rel, doc in term.docs(nodes=True):
   assert doc.guid == doc0.guid
+
+
 #
+# One-sided relationship
+# 
+
+# term.docs has one entry, so let's make sure that it didn't
+# bleed into the separate special_docs relation.
+exc = None
+try:
+  term.special_docs[0]
+except IndexError, e:
+  exc = e
+assert e != None
+
+# create a special doc relation and make sure it didn't bleed into 
+# the other docs relation
+term.special_docs.add(doc1)
+for rel in term.docs():
+  assert rel.base_id != doc1.guid
+
+# make sure it the relation was added as expected
+assert term.special_docs[0].rel_id == doc1.guid
+
+'''
+TODO
+ - test index manipulation for names/aliases/children/rels
+   - index/forward_index/reverse_index in create/add calls
+   - shift()
+ - node.remove()
+ - node.update()
+'''
+
