@@ -9,6 +9,7 @@ import metaclasses
 from flags import Flags
 
 _no_arg = {}
+guid_prefix = lambda dhw, s: '%s:%s' % (dhw.guid, s)
 
 class Dict(object):
   ''' base class for all classes that wrap datahog dicts, which are 
@@ -53,7 +54,7 @@ class Dict(object):
 
   def remove(self, **kw):
     args = self._ids_args + [self._ctx] + self._remove_args
-    return self._table.remove(db.pool, *args, **_dhkw(kw))
+    return self._table.remove(db.pool, *args, **dhkw(kw))
 
   
   @classmethod
@@ -63,14 +64,14 @@ class Dict(object):
   
   def save_flags(self, add, clear, **kw):
     args = [db.pool] + self._id_args + [self._ctx, add, clear]
-    self._table.set_flags(*args, **_dhkw(kw))
+    self._table.set_flags(*args, **dhkw(kw))
 
 
 class List(object):
   __metaclass__ = metaclasses.ListMC
   default_page_size = 100
   of_type = None
-
+  _owner = None
 
   def __init__(self, owner, *args, **kw):
     self._owner = owner
@@ -88,15 +89,15 @@ class List(object):
     kw.setdefault('limit', self.default_page_size)
     for page, offset in self._pages(**kw):
       for result in page:
-        yield self._wrap_result(result, **kw)
+        yield self._wrap_result(result, **dhkw(kw, blacklist=True))
 
 
   def _wrap_result(self, result, **kw):
-    return self.of_type(dh=result, owner=self._owner)
+    return self.of_type(dh=result, owner=self._owner, **kw)
 
 
   def _get_page(self, *args, **kw):
-    return self.of_type._table.list(*args, **_dhkw(kw))
+    return self.of_type._table.list(*args, **dhkw(kw))
 
 
   def _pages(self, **kw):
@@ -113,8 +114,21 @@ class List(object):
 
 
   def add(self, value, flags=None, **kw):
-    return self._add(db.pool, self._owner.guid, self.of_type._ctx, value, flags=flags._flags_set, **_dhkw(kw))
+    return self._add(db.pool, 
+                     self._owner.guid,
+                     self.of_type._ctx,
+                     value,
+                     flags=flags._flags_set,
+                     **dhkw(kw))
 
+
+  def __getattr__(self, name):
+    ''' For node.children.by_child_alias lookups '''
+    if name.startswith('by_'):
+      lookup = getattr(self.of_type, name, None)
+      if lookup:
+        return functools.partial(lookup, scope_to_parent=self._owner)
+    raise AttributeError
 
 
 class ValueDict(Dict):
@@ -145,7 +159,6 @@ class ValueDict(Dict):
 
   def __call__(self, value=_no_arg, flags=None, **kwargs):
     if value is _no_arg:
-      # TODO test this case
       self._dh = self._get(**kwargs)
       return self
 
@@ -165,7 +178,7 @@ class ValueDict(Dict):
       raise exc.CannotIncrementNonnumericValue()
     
     args = self._id_args + [self._ctx]
-    new_val = self._table.increment(db.pool, *args, **_dhkw(kw))
+    new_val = self._table.increment(db.pool, *args, **dhkw(kw))
     if new_val is None:
       raise exc.DoesNotExist(self)
     self.value = new_val
@@ -205,7 +218,7 @@ class GuidDict(Dict):
   #   children, offset = node.get_children(db.pool,
   #                                        self.guid,
   #                                        child_cls._ctx,
-  #                                        **_dhkw(kw))
+  #                                        **dhkw(kw))
   #   return [child_cls(dh=n) for n in children]
 
 
@@ -216,7 +229,7 @@ class GuidDict(Dict):
       ids = [(id,cls._ctx) for id in ids]
     return cls._table.batch_get(db.pool, 
                                 ids,
-                                **_dhkw(kw))
+                                **dhkw(kw))
     
 
   @classmethod
@@ -233,13 +246,13 @@ class PosDict(Dict):
 
   def shift(self, *args, **kw):
     args = [db.pool] + self._id_args + [self._ctx] + list(args)
-    return self._table.shift(*args, **_dhkw(kw))
+    return self._table.shift(*args, **dhkw(kw))
     
 
 class BaseIdDict(PosDict):
   _id_arg_strs = ('base_id',)
   base_cls = None
-  
+  _owner = None
 
   def __init__(self, owner=None, dh=None):
     self._owner = owner
@@ -283,7 +296,7 @@ class Relation(BaseIdDict):
     return cls(dh=cls._table.get(
       db.pool, 
       guid,
-      cls._ctx, **_dhkw(kw)))
+      cls._ctx, **dhkw(kw)))
 
 
   class List(List):
@@ -329,7 +342,7 @@ class Relation(BaseIdDict):
                                  base_id,
                                  rel_id,
                                  flags=flags and flags._flags_set or None,
-                                 **_dhkw(kw))
+                                 **dhkw(kw))
 
 
 class LookupDict(BaseIdDict, ValueDict):
@@ -340,7 +353,7 @@ class LookupDict(BaseIdDict, ValueDict):
   # schema = str
 
   def _get(self, **kw):
-    entries = self._table.list(db.pool, self.base_id, self._ctx, **_dhkw(kw))[0]
+    entries = self._table.list(db.pool, self.base_id, self._ctx, **dhkw(kw))[0]
     if not entries:
       return {'base_id': self.base_id}
     self._fetched_value = entries[0]['value'] # for remove during save
@@ -356,7 +369,7 @@ class Entity(GuidDict):
     super(Entity, self).__init__(
       dh=dh or entity.create(
         db.pool,
-        self._ctx, **_dhkw(kw)))
+        self._ctx, **dhkw(kw)))
 
 
 class Node(GuidDict, ValueDict, PosDict): 
@@ -373,13 +386,13 @@ class Node(GuidDict, ValueDict, PosDict):
                        parent.guid,
                        self._ctx,
                        value or self.default_value(),
-                       **_dhkw(kw))
+                       **dhkw(kw))
     super(Node, self).__init__(dh=dh)
 
 
   def move(self, new_parent, **kw):
     moved =  node.move(
-      db.pool, self.guid, self._ctx, self.parent.guid, new_parent.guid, **_dhkw(kw))
+      db.pool, self.guid, self._ctx, self.parent.guid, new_parent.guid, **dhkw(kw))
     if moved:
       self.parent = new_parent
     return moved
@@ -388,7 +401,7 @@ class Node(GuidDict, ValueDict, PosDict):
   def save(self, force=False, **kw):
     result = node.update(
       db.pool, self.guid, self._ctx, self, old_value=force and _missing or self, 
-      **_dhkw(kw))
+      **dhkw(kw))
     if not result:
       if force:
         raise exc.DoesNotExist(node)
@@ -398,8 +411,11 @@ class Node(GuidDict, ValueDict, PosDict):
 
 
   class List(List):
+    def _wrap_result(self, *args, **kw):
+      return super(Node.List, self)._wrap_result(*args, parent=self._owner, **kw)
+
     def _get_page(self, *args, **kw):
-      return node.get_children(*args, **_dhkw(kw))
+      return node.get_children(*args, **dhkw(kw))
 
     @property
     def flags(self):
@@ -409,10 +425,35 @@ class Node(GuidDict, ValueDict, PosDict):
 class Alias(LookupDict):
   _table = alias
   _fetched_value = None
+  uniq_to_parent = None
+
+
+  def __call__(self, value=_no_arg, **kwargs):
+    if value is not _no_arg and self.uniq_to_parent:
+      value = guid_prefix(self._owner.parent, value)
+    return super(Alias, self).__call__(value=value, **kwargs)
+
+
+  @property
+  def value(self):
+    if self.uniq_to_parent:
+      return self._dh['value'].replace('%s:' % self._owner.parent.guid, '')
+    return LookupDict.value.fget(self)
+
+
+  @value.setter
+  def value(self, value):
+    if self.uniq_to_parent:
+      if not value.startswith('%s:' % self._owner.parent.guid):
+        value = guid_prefix(self._owner.parent, value)
+    self._dh['value'] = value
+    LookupDict.value.fset(self, value)
 
 
   class List(List):
     def _add(self, *args, **kwargs):
+      if self.of_type.uniq_to_parent:
+        args[3] = self._uniq_to_parent_val(args[3])
       return alias.set(*args, **kwargs)
 
 
@@ -420,15 +461,18 @@ class Alias(LookupDict):
     # Q: does this need some dirty-checking logic?
     if self._fetched_value:
       alias.remove(
-        db.pool, self.base_id, self._ctx, self._fetched_value, **_dhkw(kw))
-    alias.set(db.pool, self.base_id, self._ctx, self.value, **_dhkw(kw))
+        db.pool, self.base_id, self._ctx, self._fetched_value, **dhkw(kw))
+    alias.set(db.pool, self.base_id, self._ctx, self._dh['value'], **dhkw(kw))
 
 
   @classmethod
-  def lookup(cls, value, **kw):
-    dh_alias = alias.lookup(db.pool, value, cls._ctx, **_dhkw(kw))
+  def lookup(cls, value, scope_to_parent=None, **kw):
+    if scope_to_parent:
+      value = guid_prefix(scope_to_parent, value)
+    dh_alias = alias.lookup(db.pool, value, cls._ctx, **dhkw(kw))
     if dh_alias:
       return cls.base_cls.by_guid(dh_alias['base_id'])
+
 
 class Name(LookupDict):
   _table = name
@@ -438,7 +482,7 @@ class Name(LookupDict):
 
   @classmethod
   def lookup(cls, value, **kw):
-    dh_names, offset = name.search(db.pool, value, cls._ctx, **_dhkw(kw))
+    dh_names, offset = name.search(db.pool, value, cls._ctx, **dhkw(kw))
     if len(dh_names):
       return cls.base_cls.by_guid([n['base_id'] for n in dh_names])
 
@@ -450,7 +494,7 @@ class Name(LookupDict):
       existing_name = name.list(db.pool, self.base_id, self._ctx, limit=1)
       if existing_name and existing_name[0]['value']:
         name.remove(db.pool, self.base_id, self._ctx, existing_name['value'])
-    name.create(db.pool, self.base_id, self._ctx, self.value, **_dhkw(kw))
+    name.create(db.pool, self.base_id, self._ctx, self.value, **dhkw(kw))
 
 
 class Prop(ValueDict, BaseIdDict):
@@ -462,7 +506,7 @@ class Prop(ValueDict, BaseIdDict):
 
 
   def _get(self, **kw):
-    return prop.get(db.pool, self.base_id, self._ctx, **_dhkw(kw))
+    return prop.get(db.pool, self.base_id, self._ctx, **dhkw(kw))
 
 
   @property
@@ -485,6 +529,20 @@ class Prop(ValueDict, BaseIdDict):
     return prop.set(db.pool, self.base_id, self._ctx, self.value)
 
 
-_allowed = ['timeout', 'forward_index', 'reverse_index', 'by', 'index', 'limit', 'start', 'forward']
-def _dhkw(kw):
-  return dict((k, v) for k,v in kw.iteritems() if k in _allowed)
+dh_kwargs = ['timeout',
+             'forward_index',
+             'reverse_index',
+             'by',
+             'index',
+             'limit',
+             'start',
+             'forward']
+def dhkw(kw, blacklist=False):
+  ''' Intersect or exclude datahog kwargs '''
+  pass_thru = {}
+  for key, val in kw.iteritems():
+    if key in dh_kwargs and not blacklist:
+      pass_thru[key] = val
+    elif key not in dh_kwargs and blacklist:
+      pass_thru[key] = val
+  return pass_thru

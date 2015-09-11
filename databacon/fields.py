@@ -56,9 +56,12 @@ def relation(target):
   return cls
 
 
-def _lookup(plural=False, _kind=None, _search_mode=None, loose=None):
+def _lookup(plural=False, _kind=None, _search_mode=None, loose=None, uniq_to_parent=False):
   meta = {'search': _search_mode, 'phonetic_loose': loose}
-  cls = subclass(_kind, {'_meta': meta})
+  attrs = {'_meta': meta}
+  if _kind == dhw.Alias and uniq_to_parent:
+    attrs['uniq_to_parent'] = True
+  cls = subclass(_kind, attrs)
   if plural:
     cls = subclass(cls.List, {'of_type': cls})
     cls.of_type.plural = cls # eww circular ref

@@ -9,25 +9,34 @@ uniq = lambda s: '%s-%s-%s' % (s, time.time(), random.random())
 
 
 
+# Setup
+user0, user1 = User(), User()
+corpus0 = Corpus(parent=user0)
+corpus1 = Corpus(parent=user1)
+
+term = Term(parent=corpus0)
+word = uniq("word")
+term.string(word)
+
+doc0 = Doc({'path': '/path/to/original.file'}, parent=corpus0)
+doc1 = Doc({'path': '/to/file1'}, parent=corpus0)
+doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
+
 ###
 ### Nodes & Entities
 ###
 
-# Creation
-user0 = User()
-corpus0 = Corpus(parent=user0)
-doc0 = Doc({'path': '/path/to/original.file'}, parent=corpus0)
 assert user0.guid != corpus0.guid != doc0.guid != None
 
 # Fetching Child Nodes
 for corpus in user0.corpora():
   assert corpus.guid == corpus0.guid
+  assert corpus.parent == user0
   for doc in corpus.docs():
-    assert doc.guid == doc0.guid
+    assert doc.guid in (doc0.guid, doc1.guid, doc2.guid)
 
 
 # Moving Child Nodes
-user1 = User() 
 corpus0.move(user1)
 assert corpus0.parent.guid == user1.guid
 
@@ -78,6 +87,7 @@ for doc in Doc.by_title(title):
   found_it = doc.guid == doc0.guid
   if found_it:
     break
+assert found_it
 
 # Plural Alias/Name (& and passing flags to object creation)
 email_flags = User.emails.flags(verification_status='sent')
@@ -89,6 +99,10 @@ for email in user0.emails():
   assert email.value == address
   assert email.flags.verification_status == email_flags.verification_status
 
+# uniq_to_parent
+assert corpus0.terms.by_string(word).guid == term.guid
+assert corpus1.terms.by_string(word) == None
+
 # Property
 pass_flags = User.password.flags(two_factor=True)
 user0.password('new_password', flags=pass_flags)
@@ -99,14 +113,11 @@ pw = user0.password() # fetch it fresh
 assert pw.value == 'newer_password'
 assert pw.flags.two_factor == True
 
-# See Incrementing an Integer Schema'd object below
 
 ###
 ### Relationships
 ###
 
-doc1 = Doc({'path': '/to/file1'}, parent=corpus0)
-doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
 
 # Create
 score0_int = int(.4 * Doc.scores.flags.similarity.max_val)
@@ -135,9 +146,6 @@ assert doc0.scores[0].flags.similarity == score1_int
 
 
 # Relationships & Incrementing an Integer Schema
-word = uniq("word")
-term = Term(parent=corpus0)
-term.string(word)
 doc0_term_count = 3 # imagine that "word" occurs 3 times in doc0
 term_flags = Doc.terms.flags(count=doc0_term_count)
 doc0.terms.add(term, flags=term_flags)
@@ -148,14 +156,13 @@ assert term.docs.add(doc0) == False
 # should be the same relationship
 assert term.docs[0].base_id == doc0.guid
 
-# Per the schema, the term's int value represents a denormalized count of
-# the # of docs it has relationships with, although that logic is not actually
-# defined here.
+# increment() for int schemas 
+# (the term's int represents a denormalized count of docs it occurs in)
 term.increment()
-assert Term.by_string(word).value == 1
+assert corpus0.terms.by_string(word).value == 1
 
 term.increment()
-assert Term.by_string(word).value == 2
+assert corpus0.terms.by_string(word).value == 2
 
 # Lookup incoming relationships
 for doc_term_rel in term.docs(): 
@@ -188,12 +195,15 @@ for rel in term.docs():
 # make sure it the relation was added as expected
 assert term.special_docs[0].rel_id == doc1.guid
 
+
 '''
 TODO
- - test index manipulation for names/aliases/children/rels
-   - index/forward_index/reverse_index in create/add calls
-   - shift()
- - node.remove()
- - node.update()
+- test index manipulation for names/aliases/children/rels
+  - index/forward_index/reverse_index in create/add calls
+  - shift()
+- node.remove()
+- node.update()
+- multi page lists
+- plural alias
 '''
 

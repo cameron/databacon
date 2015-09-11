@@ -24,6 +24,7 @@ class User(db.Entity):
   flags.alternate_corpus_count = db.flag.int(max_val=5) 
 
   username = db.lookup.alias()
+
   emails = db.lookup.alias(plural=True)
   emails.flags.verification_status = db.flag.enum('unsent', 
                                                   'sent', 
@@ -32,15 +33,20 @@ class User(db.Entity):
 
   password = db.prop(str)
   password.flags.two_factor = db.flag.bool(False)
+
   corpora = db.children('Corpus')
 
 
 class Corpus(db.Node):
   parent = User
 
-  # convenience accessor for the corpus.children(Doc) generator
   docs = db.children('Doc')
 
+  # TODO if this accessor is not defined, and the terms.string field
+  # is a db.lookup.alias(uniq_to_parent=True), it's impossible to 
+  # lookup terms by their string aliases. Either throw an error if the
+  # accessor is missing, or automatically generate an accessor.
+  terms = db.children('Term')
 
 class Doc(db.Node):
   parent = Corpus
@@ -64,8 +70,10 @@ class Doc(db.Node):
 
 class Term(db.Node):
   parent = Corpus
+
   schema = int # number of docs in the corpus that include this term
-  string = db.lookup.alias()
+
+  string = db.lookup.alias(uniq_to_parent=True)
 
   # define an accessor for the already-declared relationship Doc.terms
   docs = db.relation(Doc.terms) 

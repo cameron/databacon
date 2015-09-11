@@ -5,6 +5,7 @@
 # a class that behaves as specified.
 
 import inspect
+import types
 
 import flags
 import datahog as dh
@@ -139,12 +140,18 @@ class GuidMC(DictMC):
   def resolve_pending_cls(cls):
     ''' Some relationships and lists are awaiting the creation of a 
     rel_cls/of_type class. '''
-    for rel in rels_pending_cls.get(cls.__name__, []):
-      rel.rel_cls = cls
-      rel.define_dh_ctx(rel)
 
-    for list_cls in lists_pending_cls.get(cls.__name__, []):
-      list_cls.of_type = cls
+    cls_name = cls.__name__
+    if cls_name in rels_pending_cls:
+      for rel in rels_pending_cls[cls_name]:
+        rel.rel_cls = cls
+        rel.define_dh_ctx(rel)
+      del rels_pending_cls[cls_name]
+
+    if cls_name in lists_pending_cls:
+      for list_cls in lists_pending_cls[cls_name]:
+        list_cls.of_type = cls
+      del lists_pending_cls[cls_name]
   
 
   def finalize_attr_classes(cls, attrs):
@@ -187,9 +194,6 @@ class GuidMC(DictMC):
             .append(list_cls)
           ctx_cls = list_cls # sorry
 
-      # TODO this renaming is kinda confusing... seems like it's hitting some
-      # classes twice?
-
       # Replace the field's temporary class name with something meaningful.
       # E.g.:
       #   'Relation-0' -> 'DocTermsRelation'
@@ -199,7 +203,9 @@ class GuidMC(DictMC):
                                      ctx_cls.__name__.split('-')[0])
         ctx_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
 
+
       if has_ancestor_named(ctx_cls, 'BaseIdDict'):
+
         # subclasses of relation might already have a context
         if type(ctx_cls._ctx) is int:
           continue
@@ -210,8 +216,11 @@ class GuidMC(DictMC):
         ctx_cls.__metaclass__.define_dh_ctx(ctx_cls)
 
         
+        # setup class methods for looking up 
+        # instances by name and alias
         if has_ancestor_named(ctx_cls, 'LookupDict'):
           setattr(cls, 'by_%s' % attr, ctx_cls.lookup)
+
 
 @only_for_user_defined_subclasses
 class NodeMC(ValueDictMC, GuidMC):
