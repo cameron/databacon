@@ -12,4 +12,4 @@ setup(
     packages=["databacon"],
     version='.'.join(filter(None, map(str, VERSION))),
     install_requires=['datahog', 'mummy'],
-)"")
+)
