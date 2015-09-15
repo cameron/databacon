@@ -67,6 +67,15 @@ class Dict(object):
     self._table.set_flags(*args, **dhkw(kw))
 
 
+  def json(self):
+    ''' Not the best name -- actually returns a jsonable dict (flags are a set,
+    which doesn't serialize to json).'''
+    json = self._dh.copy()
+    json['flags'] = list(json['flags'])
+    del json['ctx']
+    return json
+
+
 class List(object):
   __metaclass__ = metaclasses.ListMC
   default_page_size = 100
@@ -332,11 +341,11 @@ class Relation(BaseIdDict):
       return super(Relation.List, self)._get_page(*args, **kw)
 
 
-    def add(self, dh_instance, flags=None, **kw):
+    def add(self, db_instance, flags=None, **kw):
       if self.of_type.forward:
-        base_id, rel_id = self._owner.guid, dh_instance.guid
+        base_id, rel_id = self._owner.guid, db_instance.guid
       else:
-        base_id, rel_id = dh_instance.guid, self._owner.guid
+        base_id, rel_id = db_instance.guid, self._owner.guid
       return relationship.create(db.pool, 
                                  self.of_type._ctx,
                                  base_id,
