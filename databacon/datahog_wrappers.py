@@ -147,11 +147,11 @@ class ValueDict(Dict):
   schema = None
 
 
-  @classmethod
   def default_value(self):
     return ({
       int: 0,
       str: '',
+      unicode: u'',
       type(None): None,
     }).get(type(self.schema) is type and self.schema or type(self.schema), {})
     
@@ -391,10 +391,12 @@ class Node(GuidDict, ValueDict, PosDict):
   def __init__(self, value=None, parent=None, dh=None, **kw):
     self.parent = parent
     if not dh:
+      if value is None:
+        value = self.default_value()
       dh = node.create(db.pool, 
                        parent.guid,
                        self._ctx,
-                       value or self.default_value(),
+                       value,
                        **dhkw(kw))
     super(Node, self).__init__(dh=dh)
 
