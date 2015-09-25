@@ -8,7 +8,7 @@ import db
 import metaclasses
 from flags import Flags
 
-_no_arg = {}
+_missing = node._missing
 guid_prefix = lambda dhw, s: '%s:%s' % (dhw.guid, s)
 
 class Dict(object):
@@ -170,8 +170,8 @@ class ValueDict(Dict):
     self._dh['value'] = value
 
 
-  def __call__(self, value=_no_arg, flags=None, **kwargs):
-    if value is _no_arg:
+  def __call__(self, value=_missing, flags=None, **kwargs):
+    if value is _missing:
       self._dh = self._get(**kwargs)
       return self
 
@@ -394,10 +394,10 @@ class Node(GuidDict, ValueDict, PosDict):
   parent = None 
 
 
-  def __init__(self, value=None, parent=None, dh=None, **kw):
+  def __init__(self, value=_missing, parent=None, dh=None, **kw):
     self.parent = parent
     if not dh:
-      if value is None:
+      if value is _missing:
         value = self.default_value()
       dh = node.create(db.pool, 
                        parent.guid,
@@ -417,7 +417,7 @@ class Node(GuidDict, ValueDict, PosDict):
 
   def save(self, force=False, **kw):
     result = node.update(
-      old_value = force and node._missing or self.old_value
+      old_value = force and _missing or self.old_value
       db.pool, self.guid, self._ctx, self.value, old_value=old_value, 
       **dhkw(kw))
     if not result:
@@ -446,8 +446,8 @@ class Alias(LookupDict):
   uniq_to_parent = None
 
 
-  def __call__(self, value=_no_arg, **kwargs):
-    if value is not _no_arg and self.uniq_to_parent:
+  def __call__(self, value=_missing, **kwargs):
+    if value is not _missing and self.uniq_to_parent:
       value = guid_prefix(self._owner.parent, value)
     return super(Alias, self).__call__(value=value, **kwargs)
 
