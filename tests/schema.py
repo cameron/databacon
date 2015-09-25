@@ -6,7 +6,7 @@ db.connect({
     'shard': 0,
     'count': 4,
     'host': '12.12.12.12',
-    'port': '5432',
+    'port': '6543',
     'user': 'legalease',
     'password': '',
     'database': 'legalease',

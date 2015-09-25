@@ -148,7 +148,7 @@ class ValueDict(Dict):
 
 
   def __init__(self, *args, **kwargs):
-    super(Dict, self).__init__(*args, **kwargs)
+    super(ValueDict, self).__init__(*args, **kwargs)
     self.old_value = self.value
 
   def default_value(self):
@@ -162,7 +162,7 @@ class ValueDict(Dict):
 
   @property
   def value(self):
-    return self._dh['value']
+    return self._dh.get('value')
 
 
   @value.setter
@@ -170,21 +170,21 @@ class ValueDict(Dict):
     self._dh['value'] = value
 
 
-  def __call__(self, value=_missing, flags=None, **kwargs):
+  def __call__(self, value=_missing, flags=None, force=False, **kwargs):
     if value is _missing:
       self._dh = self._get(**kwargs)
       return self
 
     self.value = value
-    self.save()
+    self.save(force=force)
     
     if flags:
-      # TODO this feels super gross
       self.flags = flags
+      # TODO this feels WET 
       self._dh['flags'] = flags._tmp_set
       self.flags._owner = self
       self.flags.save()
-
+    return self
 
   def increment(self, **kw):
     if not self.schema is int:
@@ -250,7 +250,7 @@ class GuidDict(Dict):
   @classmethod
   def by_guid(cls, ids, **kw):
     dicts = cls._by_guid(ids, **kw)
-    if len(dicts) > 1:
+    if type(ids) in (list, tuple):
       return [cls(dh=dh) for dh in dicts]
     else:
       return cls(dh=dicts[0])
@@ -416,17 +416,21 @@ class Node(GuidDict, ValueDict, PosDict):
 
 
   def save(self, force=False, **kw):
-    result = node.update(
-      old_value = force and _missing or self.old_value
-      db.pool, self.guid, self._ctx, self.value, old_value=old_value, 
-      **dhkw(kw))
+    old_value = force and _missing or self.old_value
+    result = node.update(db.pool,
+                         self.guid,
+                         self._ctx,
+                         self.value,
+                         old_value=old_value,
+                         **dhkw(kw))
     if not result:
       if force:
         raise exc.DoesNotExist(node)
       else:
         raise exc.WillNotUpdateStaleNode(node)
-    return result
 
+    self.old_value = self.value
+    return self
 
   class List(List):
     def _wrap_result(self, *args, **kw):
@@ -454,10 +458,10 @@ class Alias(LookupDict):
 
   @property
   def value(self):
-    if self.uniq_to_parent:
-      return self._dh['value'].replace('%s:' % self._owner.parent.guid, '')
-    return LookupDict.value.fget(self)
-
+    val = LookupDict.value.fget(self)
+    if val and self.uniq_to_parent:
+      return val.replace('%s:' % self._owner.parent.guid, '')
+    return val
 
   @value.setter
   def value(self, value):
@@ -542,7 +546,7 @@ class Prop(ValueDict, BaseIdDict):
     self.ignore_remove_race = was
 
 
-  def save(self):
+  def save(self, **kwargs):
     # TODO travis, any reason props don't support the _missing pattern in set?
     return prop.set(db.pool, self.base_id, self._ctx, self.value)
 

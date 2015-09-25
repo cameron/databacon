@@ -41,6 +41,25 @@ corpus0.move(user1)
 assert corpus0.parent.guid == user1.guid
 
 
+# Updating Node Values
+doc0({'path': 'one'})
+doc00 = Doc.by_guid(doc0.guid)
+assert doc0.value['path'] == doc00.value['path']
+doc00({'path': 'another'})
+
+# Updating stale node values should fail
+exc = None
+try:
+  doc0({'path': 'should fail'})
+except Exception, e:
+  pass
+assert e != None
+
+# Forcing an update should not fail
+doc0({'path': 'brute force'}, force=True)
+assert Doc.by_guid(doc0.guid).value == doc0.value
+  
+
 ###
 ### Flags (exists on all DH* instances)
 ### 
@@ -202,7 +221,6 @@ TODO
   - index/forward_index/reverse_index in create/add calls
   - shift()
 - node.remove()
-- node.update(), force=True/False
 - multi page lists
 - plural alias
 '''
