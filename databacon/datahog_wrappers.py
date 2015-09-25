@@ -153,7 +153,7 @@ class ValueDict(Dict):
       str: '',
       unicode: u'',
       type(None): None,
-    }).get(type(self.schema) is type and self.schema or type(self.schema), {})
+    }).get(type(self.schema) is type and self.schema or type(self.schema), None)
     
 
   @property
