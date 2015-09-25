@@ -147,6 +147,10 @@ class ValueDict(Dict):
   schema = None
 
 
+  def __init__(self, *args, **kwargs):
+    super(Dict, self).__init__(*args, **kwargs)
+    self.old_value = self.value
+
   def default_value(self):
     return ({
       int: 0,
@@ -193,10 +197,12 @@ class ValueDict(Dict):
     self.value = new_val
     return self
 
-# save method names
-# - node: update
-# - alias/name: none (must remove/create a new one)
-# - prop: set
+# TODO unify save() methods
+#  - and .save() flags
+#  - list of save method names
+#   - node: update
+#   - alias/name: none (must remove/create a new one)
+#   - prop: set
 
 
 class GuidDict(Dict):
@@ -411,7 +417,8 @@ class Node(GuidDict, ValueDict, PosDict):
 
   def save(self, force=False, **kw):
     result = node.update(
-      db.pool, self.guid, self._ctx, self, old_value=force and _missing or self, 
+      old_value = force and node._missing or self.old_value
+      db.pool, self.guid, self._ctx, self.value, old_value=old_value, 
       **dhkw(kw))
     if not result:
       if force:

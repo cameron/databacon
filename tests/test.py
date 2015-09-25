@@ -202,7 +202,7 @@ TODO
   - index/forward_index/reverse_index in create/add calls
   - shift()
 - node.remove()
-- node.update()
+- node.update(), force=True/False
 - multi page lists
 - plural alias
 '''
