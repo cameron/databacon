@@ -48,6 +48,7 @@ class Corpus(db.Node):
   # accessor is missing, or automatically generate an accessor.
   terms = db.children('Term')
 
+
 class Doc(db.Node):
   parent = Corpus
 
