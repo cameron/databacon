@@ -11,16 +11,16 @@ uniq = lambda s: '%s-%s-%s' % (s, time.time(), random.random())
 
 # Setup
 user0, user1 = User(), User()
-corpus0 = Corpus(parent=user0)
-corpus1 = Corpus(parent=user1)
+corpus0 = Corpus(user=user0)
+corpus1 = Corpus(user=user1)
 
-term = Term(parent=corpus0)
+term = Term(coprus=corpus0)
 word = uniq("word")
 term.string(word)
 
-doc0 = Doc({'path': '/path/to/original.file'}, parent=corpus0)
-doc1 = Doc({'path': '/to/file1'}, parent=corpus0)
-doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
+doc0 = Doc(file_meta={'path': '/to/original.file'}, corpus=corpus0)
+doc1 = Doc(file_meta={'path': '/to/file1'}, corpus=corpus0)
+doc2 = Doc(file_meta={'path': '/to/file2'}, corpus=corpus0)
 
 ###
 ### Nodes & Entities
@@ -29,23 +29,26 @@ doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
 assert user0.guid != corpus0.guid != doc0.guid != None
 
 # Fetching Child Nodes
+found_at_least_one = False
 for corpus in user0.corpora():
+  found_at_least_one = True
   assert corpus.guid == corpus0.guid
-  assert corpus.parent == user0
+  assert corpus.user.guid == user0.guid 
   for doc in corpus.docs():
     assert doc.guid in (doc0.guid, doc1.guid, doc2.guid)
-
+assert found_at_least_one
 
 # Moving Child Nodes
 corpus0.move(user1)
-assert corpus0.parent.guid == user1.guid
+assert corpus0.user.guid == user1.guid
 
 
 # Updating Node Values
-doc0({'path': 'one'})
+doc0(file_meta={'path': 'one'})
 doc00 = Doc.by_guid(doc0.guid)
-assert doc0.value['path'] == doc00.value['path']
-doc00({'path': 'another'})
+assert doc0.file_meta['path'] == doc00.file_meta.path
+doc00.file_meta.path = 'another'
+doc00.save()
 
 # Updating stale node values should fail
 exc = None
@@ -56,7 +59,7 @@ except Exception, e:
 assert e != None
 
 # Forcing an update should not fail
-doc0({'path': 'brute force'}, force=True)
+doc0(file_meta={'path': 'brute force'}, force=True)
 assert Doc.by_guid(doc0.guid).value == doc0.value
   
 
@@ -89,12 +92,11 @@ user2 = User(flags=user_flags)
 ###
 
 # Singular Alias
-username = user0.username()
-username.value = uniq("cam")
-username.save()
+new_alias = uniq("cam")
+user0.username(new_alias)
 
 # Lookup user by alias
-assert User.by_username(username.value).guid == user0.guid
+assert User.by_username(new_alias).guid == user0.guid
 
 # Lookup document by title (datahog name)
 title = uniq('porcine storage mechanisms, or, pig pens')
@@ -177,11 +179,11 @@ assert term.docs[0].base_id == doc0.guid
 
 # increment() for int schemas 
 # (the term's int represents a denormalized count of docs it occurs in)
-term.increment()
-assert corpus0.terms.by_string(word).value == 1
+term.doc_count.increment()
+assert corpus0.terms.by_string(word).doc_count == 1
 
-term.increment()
-assert corpus0.terms.by_string(word).value == 2
+term.doc_count.increment()
+assert corpus0.terms.by_string(word).doc_count == 2
 
 # Lookup incoming relationships
 for doc_term_rel in term.docs(): 

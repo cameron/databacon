@@ -1,60 +1,68 @@
 # Databacon
 
-## Roadmap
-
-* graphql support
-* treebalancing
-* replication/failover
-  * (and failed txn cleanup)
-* push/realtime
-  * postgres CREATE TRIGGER, LISTEN and NOTIFY
-* query forwarding for efficient, complex graph queries
-    * for chained/nested/dependent queries, let the client fire off a fully-formed description of the data it wants, and then the python process on each shard will handle forwarding the dependent lookups to the appropriate shards, each shard returning data to the client directly.
-
-### GraphQL
-
-
 ## Python API
 
-### Features
+### Cleanup
+- unify String, Bool, Int, Bits, Float, Object behind Prop
+- implement fields as descriptors
+  - `user.email -> <UnfetchedEmail>`
+  - `user.email() -> 'email@domain.com'`'
+  - `user.email -> 'email@domain.com''`
+  - `user.email('set@something.com')`
+  - this pattern is generally nice for exposing the node value and flags
+    objects without new network op semantics. they will be available without
+    (), like any other fetched value. () will also force fetch/save
+- Password field
+- class lookup methods
+  - user = User.email.get(email)
+    - hydrate user.email (same for name)
+  - users = User.email.batch([emails])
+  - docs = Doc.title.search(title)
+  - obj = Guid.id.get() # when will .id or .ids ever get called by the user? seems like admin util
+  - objs = Guid.id.batch(ids)
+- _parent should refer to the shard_affinity object
 
-#### Would Be Rad
+### GraphQL Support
+- list access (incl. batch, search, rel/child)
+  - array methods: insert/append/pop/unshift
+  - list() generates nodes, hydrates node.edge with the rel/edge
+    - list(with=('name', 'email', 'password')) to batch fetch props
+    - NB node value column is most efficient for iteration
+    - `for node in other.rel():
+        assert node.edge.node.guid == other.guid and node.edge.node != other`
+  - list.edges() for rels only (and only in the case of rels/children, not alias/name)
+  - list.props('name', 'email', 'password') for props only (no nodes)
+    - this is going to be way less efficient before implementing batch property fetching by guid
+    - and lazy fetch the flags/value on read
+  - greenhouse.map will help with batch fetching
+- interfaces
 
-* `with db.txn() as txn: ...` for arbitrary txns
-* subclass the schema type as the first base
-  * so that props, aliases, names, and nodes all behave like their value
-    * e.g., user.username().value -> user.username
-    * NB: this would break the principle of indicating network operations
-      with () or []. if this is acceptable, consider using __iter__
-      to implement list generators, as well
-    * see note about descriptors below
-* iterate over properties of related/child nodes without grabbing the node
-  * e.g.
-    * `for doc_prop in user.docs.prop():`
-    * `for rel, doc_props in user.docs(props=('some_prop',)):`
-* futures / dep graph (see datafarm wishlist)
+### Low-Priority Implementation TODOs
+- warn the user about Type('MisspelledClass')
+- network op logging
+
+## Roadmap
+- api prep for graphql
+- graphql support
+- caching layers
+  - listservon top of rel lists
+- scaled (100s of nodes) in-memory data structures with configurable persistence
+  - giant hash map
+  - queues
+- web crawler demo
+- migrations
+- txns: `with db.txn() as commit:`
+- treebalancing
+- replication/failover
+  - failed txn cleanup
+- push/realtime
+  - postgres CREATE TRIGGER, LISTEN and NOTIFY
+- query forwarding for efficient, complex graph queries
+    - for chained/nested/dependent queries, let the client fire off a fully-formed description of the data it wants, and then a client process on each shard will handle forwarding the dependent lookups to the appropriate shards, each shard returning data to the client directly.
+    - requires a client-client-server setup (python->(python->postgres))
 
 
-#### Nice To Have
-
-* m:n relationship specificity
-* network logging to help users understand how much traffic is being generated
-* unify str/unicode schemas
-* warn the user about misspelled/missing child/relation classes
-
-
-### Implementation
-
-* unify child iteration with name/alias/rel iteration
-* if instance size becomes a problem, look into __slots__
-* use descriptors to simplify implementation
-    * would obviate the need to return subclasses of dhw.* as
-    fields, and further the need to instantiate them as instances are created
-    * enables the simplier user.username pattern mentioned in the API wishlist
-
-
-### End User Notes
-
+### User Notes
  - () and [] indicate one (or two, in some cases) network operations
    - no cache. () and [] will always fetch from the network
  - () always accept datahog kwargs. mostly, this refers to timeout,
