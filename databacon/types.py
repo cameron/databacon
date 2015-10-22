@@ -17,201 +17,192 @@ from datahog import (
 )
 
 import exceptions as exc
-import db # TODO this is weird..
 from util import (
   dhkw, 
   guid_prefix,
   _missing, 
   table_to_const, 
-  type_to_storage
+  mummy_const,
+  pool,
+  attrs,
 )
 
 
+__all__ = ['Node', 'Enum', 'String', 'Bool', 'Float', 'Int', 'Prop', 'Bits']
 
-class RowMC(type):
-  user_types = {}
 
+
+class TypeMC(type):
+  awaiting = {}
+  def await_class_by_name(cls, name, attr):
+    awaiting.setdefault(name, []).append((cls, attr))
+
+
+
+class RowMC(TypeMC):
   def __new__(mcls, name, bases, attrs):
-    attrs.setdefault('_meta', {})
     cls = super(RowMC, mcls).__new__(mcls, name, bases, attrs)
-    RowMC.user_types[name] = cls
+    if name in (k for k in globals().keys() if 91 > ord(k[0]) > 65):
+      print name
+      cls.setup_user_cls()
     return cls
 
+
+  def setup_user_cls(cls):
+    if not hasattr(cls, '_meta'):
+      setattr(cls, '_meta', {})
+    cls.define_row_ctx()
+    
 
   ctx_counter = 0
   @staticmethod
   def next_ctx_int():
-    ctx_counter += 1
-    return ctx_counter
+    RowMC.ctx_counter += 1
+    return RowMC.ctx_counter
 
 
-  # consider calling this method waaay later, like just before schema definition,
-  # to standardize the ctx definition process and remove a lot of the deferred
-  # special casing
-  @classmethod
-  def define_row_ctx(mcls, cls):
-    dh.context.set_context(mcls.next_ctx_int(),
+  def define_row_ctx(cls):
+    if cls._ctx:
+      return
+    context.set_context(cls.next_ctx_int(),
                            table_to_const[cls._table], cls._meta)
     setattr(cls, '_ctx', RowMC.ctx_counter)
+
+    cls.freeze_flags()
+    cls.resolve_future_type()
+
+
+  def freeze_flags(cls):
     for attr, val in cls.__dict__:
-      if type(val) is Bits:
+      if type(val) is Bits.Field:
         cls._bits = val
         cls._bits.freeze(cls._ctx)
 
-
-
-rels_pending_cls = {}
-lists_pending_cls = {}
-
-class RelationMC(RowMC):
-  @classmethod
-  def define_row_ctx(mcls, cls):
-    ''' Runs once per accessor defined for a relationship. '''
-    if cls.base_cls and cls.rel_cls:
-      cls._meta['base_ctx'] = cls.base_cls._ctx
-      cls._meta['rel_ctx'] = cls.rel_cls._ctx
-      super(RelationMC, mcls).define_row_ctx(cls)
-
-
-
-class ValueRowMC(RowMC):
-  @staticmethod
-  def _storage_from_schema(schema):
-    ''' Map python types to datahog storage constants. '''
-    try:
-      return ValueRowMC.to_storage[schema]
-    except (KeyError, TypeError):
-      return dh.storage.SERIAL
-
-
-  @classmethod
-  def define_row_ctx(mcls, cls):
-    cls._meta['storage'] = ValueRowMC._storage_from_schema(cls.schema)
-    if cls.schema and cls._meta['storage'] == dh.storage.SERIAL:
-      cls._meta['schema'] = cls.schema
-    super(ValueRowMC, mcls).define_row_ctx(cls)
-
-
-
-class NodeMC(ValueRowMC):
-  def __new__(mcls, name, bases, attrs):
-    args = [name, bases, attrs]
-
-    # TODO move to attr processing, use shard_affinity flag
-    parent = attrs.get('parent')
-    if parent and parent.__metaclass__ != NodeMC:
-      raise exc.InvalidParentType(*args)
-
-    cls = super(GuidMC, mcls).__new__(mcls, name, bases, attrs)
-
-    mcls.define_row_ctx(cls)
-    mcls.resolve_pending_cls(cls)
-    mcls.finalize_attr_classes(cls, attrs)
-
-    if hasattr(cls, 'flags'):
-      cls.flags.freeze(cls._ctx)
-
-    return cls
-
-
-  def resolve_pending_cls(cls):
-    ''' Some relationships and lists are awaiting the creation of a 
-    rel_cls/of_type class. '''
-
-    cls_name = cls.__name__
-    if cls_name in rels_pending_cls:
-      for rel in rels_pending_cls[cls_name]:
-        rel.rel_cls = cls
-        rel.define_row_ctx(rel)
-      del rels_pending_cls[cls_name]
-
-    if cls_name in lists_pending_cls:
-      for list_cls in lists_pending_cls[cls_name]:
-        list_cls.of_type = cls
-      del lists_pending_cls[cls_name]
-  
-
-  def finalize_attr_classes(cls, attrs):
-    ''' For each attr class that is a types.* subclass:
-    - assign a more meaningful class name 
-    - assign a base_ctx + define a datahog context
     
-    TODO
-    - enforce only one shard_affinity field
-    - enforce only one of each ValueRow and Bits/Int/Bool/Enum for store_on_row
+  def resolve_future_type(cls):
+    for waiting, attr in self.awaiting.get(cls.__name__,[]):
+      setattr(waiting, attr, cls)
 
+
+
+class BaseIdRowMC(RowMC):
+  _base_cls = None
+
+  def define_row_ctx(cls):
+    if 'base_id' in cls._meta:
+      super(BaseIdRowMC, cls).define_row_ctx()
+
+
+  @property
+  def base_cls(cls):
+    return cls._base_cls
+
+
+  @base_cls.setter
+  def set_base_cls(cls, base_cls):
+    cls._base_cls = base_cls
+    cls._meta['base_ctx'] = base_cls._ctx
+    cls.define_row_ctx()
+
+
+
+class RelIdRowMC(BaseIdRowMC):
+  _rel_cls = None
+
+  @property 
+  def rel_cls(cls):
+    return cls._rel_cls
+
+
+  @rel_cls.setter
+  def set_rel_cls(cls, rel_cls):
+    cls._rel_cls = rel_cls
+    cls._meta['rel_ctx'] = cls.rel_cls._ctx
+    cls.define_row_ctx()
+
+
+  def define_row_ctx(cls):
+    if 'rel_cls' in cls._meta:
+      super(RelIdRowMC, cls).define_row_ctx()
+
+
+
+class NodeRowMC(RowMC):
+  def setup_user_cls(cls):
+    cls.find_parent_cls()
+    cls.subclass_fields()
+
+
+  def find_parent_cls(cls):
+    for attr, field in cls.__dict__.iteritems():
+      if field.shard_affinity:
+        if cls._parent:
+          raise TypeError("shard_affinity already set to be %s." % cls._parent)
+        if isinstance(field.cls, FutureType):
+          raise TypeError("shard_affinity and FutureType do not mix.")
+        attrs['parent_cls'] = field.cls
+
+
+  def subclass_fields(cls):
+    ''' All fields representing datahog rows need their own datahog context. All
+    subclasses of types.Row get their own context upon class creation, so here
+    we'll subclass the field types to setup those contexts, and we'll
+    create subclasses of RelIdRow where appropriate. 
     '''
-    
-    for attr, ctx_cls in attrs.iteritems():
+    for attr, field in cls.__dict__.iteritems():
+      field_cls, list_cls = None, None
       
-      if not issubclass(ctx_cls, (BaseIdRow, List)):
+      if type(field) is list:
+        field = field[0]
+        list_cls = field.cls.List
+
+      if not isinstance(field, Field):
+        print 'Skipping ', field
         continue
 
-      # Special case for List subclasses...
-      if hasattr(ctx_cls, 'of_type'):
-        list_cls, ctx_cls = ctx_cls, ctx_cls.of_type
+      if field.shard_affinity and list_cls:
+        raise TypeError("shard_affinity can only be used on a 1:X relationship.")
 
-        if ctx_cls:
-          # ...that already have a concrete class on `of_type`, e.g.:
-          #   `children = db.children(ChildCls)`
-          #   `emails = db.alias(plural=True)`
-          #   `names = db.name(plural=True)`
-          #   `thing1 = db.relationship('Cls')`
-          #   `thing2 = db.relationship(Cls)`
-          #
-          # ...and avoiding those that don't, e.g.:
-          #   `children = db.children('ChildCls')`
-          #
-          # ...so that we can give the List subclass a more meaningful name
+      field_cls = field.cls
 
-          list_cls.__name__ = '%s%s%s' % (attr.capitalize(), 
-                                          ctx_cls.__bases__[0].__name__,
-                                          'List')
-          list_cls.__module__ = cls.__module__
+      # PropRows
+      if issubclass(field_cls, PropRow):
+        field_cls = type('%s%s' % (attr, field_cls.__name__), {'base_cls': cls}, (field_cls,))
+
+      # fields of NodeRows require RelIdRows
+      elif issubclass(field_cls, (NodeRow, FutureType)):
+        rel_name = '%s%sRel' % (cls.__name__, field.cls.__name__)
+        if field.relation:
+          if issubclass(field.cls, FutureType):
+            raise TypeError("relation and FutureType do not mix.")
+          field_cls = type(rel_name, {'foward': False}, (field.relation,))
+          field_cls.rel_cls = cls
         else:
-          print list_cls
-          lists_pending_cls\
-            .setdefault(list_cls._pending_cls_name, [])\
-            .append(list_cls)
-          ctx_cls = list_cls # sorry
-
-      # Replace the field's temporary class name with something meaningful.
-      # E.g.:
-      #   'Relation-0' -> 'DocTermsRelation'
-      #   'Alias-0' -> 'UserUsernameAlias'
-      if 'rename' in ctx_cls.__name__:
-        ctx_cls.__name__ = '%s%s' % (attr.capitalize(),
-                                     ctx_cls.__name__.split('-')[0])
-        ctx_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
-
-
-      if issubclass(ctx_cls, BaseIdRow):
-
-        # subclasses of relation might already have a context
-        if type(ctx_cls._ctx) is int:
-          continue
-
-        ctx_cls.base_cls = cls
-        ctx_cls._meta['base_ctx'] = cls._ctx
-
-        ctx_cls.__metaclass__.define_row_ctx(ctx_cls)
-
-        # setup class methods for looking up 
-        # instances by name and alias
-        if has_ancestor_named(ctx_cls, 'LookupRow'):
-          setattr(cls, 'by_%s' % attr, ctx_cls.lookup)
-
-
-  @classmethod
-  def define_row_ctx(mcls, cls):
-    # TODO shift to _parent set by shard_affinity flagged attr
-    if cls.parent is not None:
-      cls._meta['base_ctx'] = cls.parent._ctx
-    return super(NodeMC, mcls).define_row_ctx(cls)
+          field_cls = type(rel_name, {}, (RelIdRow,))
+          field_cls.base_cls = cls
+          if issubclass(field.cls, FutureType):
+            field_cls.await_class_by_name(field.cls.future_name, 'rel_cls')
+          else:
+            field_cls.rel_cls = field.cls
+            
+      if list_cls:
+        list_cls = type('%sList' % field_cls.__name__,
+                        {'of_type': field_cls}, field_cls.List)
+        setattr(cls, attr, list_cls)
+      else:
+        setattr(cls, attr, field_cls)
 
 
 
 class ListMC(type):
+#  def __new__(mcls, name, attrs, bases):
+    # register pending class if of_type is a FutureType
+#    pass
+
+
+  # TODO expose relation flags via List class method
+  # bits = User.docs.meta(bool='val', int=1, ...)
+  # user.docs.add(doc, bits=bits)
   def __getattr__(cls, name):
     if name == 'flags':
       return cls.of_type.flags
@@ -220,40 +211,39 @@ class ListMC(type):
 
 
 class Field(object):
-  def __init__(self, *args, **kwargs):
+  def __init__(self, cls, *args, **kwargs):
     self.args = args
     self.kwargs = kwargs
-    if not kwargs.get('store_on_row'):
-      self.bits = Bits()
+    self.bits = Bits()
     self.cls = cls
 
 
-class Object(object):
-  # TODO what about the Object(Prop) class?
+
+class Type(object):
 
   @classmethod
-  def Field(cls, *args, **kwargs):
+  def field(cls, *args, **kwargs):
+    print cls
     ''' TODO
-    - String(lookup=String.index.unique)
-    - String(lookup=String.index.unique_with_parent_id)
-    - String(lookup=String.index.prefix)
-    - String(lookup=String.index.phonetic)
-    - String(unicode=False)
     - Prop(store_on_row=True)
-    - Node(relation=...)
+    - NodeRow(relation=...)
     '''
-    return Field(cls, *args, **kwargs)
+    return cls.Field(cls, *args, **kwargs)
 
 
 
-class FutureType(Object):
+class FutureType(Type):
   ''' A placeholder reference for an as-yet undefined class. '''
-  def __init__(self, cls_name):
-    self.cls_name = cls_name
+  pass
 
 
 
-class Row(Object):
+def Future(name):
+    return type(name, {'future_name': name}, (FutureType,))
+
+
+
+class Row(Type):
   ''' Base for all classes that manage datahog rows, which live at `self._row`.
 
   All datahog objects share a flags attr, a remove method, a context value,
@@ -271,21 +261,23 @@ class Row(Object):
 
   
 
-  # TODO remove flags kwarg if that use case is really dead
-  def __init__(self, flags=None, _row=None):
+  def __init__(self, _row=None, **kwargs):
     self._row = _row or {}
-    # TODO instantiate BitsProxy
-    self.flags = flags or Flags(self)
+    for key, value in kwargs.iteritems():
+      if isinstance(getattr(type(self), key), Bits.Field):
+        self._row_flags = value
+      else:
+        setattr(self, key, value) # TODO this requires descriptors 
 
 
   @property
   def _id_args(self):
-    return (self._row[key] for key in self._id_arg_strs,)
+    return (self._row[key] for key in self._id_arg_strs)
 
 
   @property
   def _remove_args(self):
-    return (self._row[key] for key in self._remove_arg_strs,)
+    return (self._row[key] for key in self._remove_arg_strs)
 
 
   def remove(self, **kw):
@@ -293,18 +285,14 @@ class Row(Object):
     return self._table.remove(db.pool, *args, **dhkw(kw))
 
   
-  @classmethod
-  def _cls_by_name(cls, cls_name):
-    return cls.__metaclass__.user_types[cls_name]
-
-  
   @property
   def _row(self):
     return self.__row
 
-  @_row.setter(self, _row):
+  @_row.setter
+  def set_row(self, _row):
     self.__row = _row or {}
-    self._row_flags = _row.get('flags'], set())
+    self._row_flags = _row.get('flags', set())
 
   @property
   def _row_flags(self):
@@ -409,18 +397,29 @@ class List(object):
 class ValueRow(Row):
   ''' adds value access for datahog objects that have values:
   nodes, props, names, and aliases '''
-  __metaclass__ = ValueRowMC
   schema = None # stored_on_node will modify schema behavior/needs
   _fetched_value = None
+  _default_value = _missing
+
+  @classmethod
+  def define_row_ctx(cls):
+    cls._meta['storage'] = mummy_const(cls.schema)
+    if cls.schema and cls._meta['storage'] == dh.storage.SERIAL:
+      cls._meta['schema'] = cls.schema
+    super(ValueRow, cls).define_row_ctx()
+
+
 
   def default_value(self):
+    if not self._default_value == _missing:
+      return self._default_value
     return ({
       int: 0,
       str: '',
       unicode: u'',
       type(None): None,
     }).get(type(self.schema) is type and self.schema or type(self.schema), None)
-    
+
 
   @property
   def value(self):
@@ -431,10 +430,12 @@ class ValueRow(Row):
   def value(self, value):
     self._row['value'] = value
 
+
   @Row._row.setter
   def _set_row(self, _row):
     self._fetched_value = _row['value']
     Row._row.fset(self, _row)
+
 
   def __call__(self, value=_missing, flags=None, force=False, **kwargs):
     if value is _missing:
@@ -451,6 +452,7 @@ class ValueRow(Row):
       self.flags._owner = self
       self.flags.save()
     return self
+
 
   def increment(self, **kw):
     if not self.schema is int:
@@ -472,17 +474,19 @@ class ValueRow(Row):
 
 
 
-class PosRow(Row):
+class OrderedRow(Row):
   def shift(self, *args, **kw):
     args = [db.pool] + self._id_args + [self._ctx] + list(args)
     return self._table.shift(*args, **dhkw(kw))
     
 
 
-class BaseIdRow(PosRow):
+class BaseIdRow(Row):
+  __metaclass__ = BaseIdRowMC
   _id_arg_strs = ('base_id',)
   base_cls = None
   _owner = None
+
 
   def __init__(self, owner=None, _row=None):
     self._owner = owner
@@ -492,17 +496,21 @@ class BaseIdRow(PosRow):
 
   @property
   def base_id(self):
-    return self._owner._row['guid']
+    return self._row['base_id']
 
 
 
-class Relation(BaseIdRow):
-  __metaclass__ = RelationMC
+class RelIdRow(BaseIdRow, OrderedRow):
+  __metaclass__ = RelIdRowMC
   _id_arg_strs = ('base_id', 'rel_id')
   _table = relationship
   _rel_cls_str = None
   forward = True
   rel_cls = None
+
+  # TODO
+  # - _edge property for singular relations
+  # - descriptor
 
 
   @property
@@ -510,13 +518,8 @@ class Relation(BaseIdRow):
     return self._row['rel_id']
 
 
-  @property
-  def base_id(self):
-    return self._row['base_id']
-
-
   def shift(self, index, **kw):
-    super(Relation, self).shift(self.forward, index, **kw)
+    super(RelIdRow, self).shift(self.forward, index, **kw)
 
 
   def node(self, **kw):
@@ -539,7 +542,7 @@ class Relation(BaseIdRow):
 
 
     def _pages(self, nodes=False, **kw):
-      for page, offset in super(Relation.List, self)._pages(**kw):
+      for page, offset in super(RelIdRow.List, self)._pages(**kw):
         if nodes:
           if self.of_type.forward:
             cls = self.of_type.rel_cls
@@ -558,7 +561,7 @@ class Relation(BaseIdRow):
 
     def _get_page(self, *args, **kw):
       kw['forward'] = self.of_type.forward
-      return super(Relation.List, self)._get_page(*args, **kw)
+      return super(RelIdRow.List, self)._get_page(*args, **kw)
 
 
     def add(self, db_instance, flags=None, **kw):
@@ -575,8 +578,9 @@ class Relation(BaseIdRow):
 
 
 
-class LookupRow(BaseIdRow, ValueRow):
+class LookupRow(BaseIdRow, ValueRow, OrderedRow):
   _remove_arg_strs = ('value',)
+
 
   # TODO use List._get_page 
   def _get(self, **kw):
@@ -588,8 +592,8 @@ class LookupRow(BaseIdRow, ValueRow):
 
 
 
-class Node(ValueRow, PosRow): 
-  __metaclass__ = NodeMC
+class NodeRow(ValueRow, OrderedRow): 
+  __metaclass__ = NodeRowMC
   _table = node
   _save = node.update
   parent = None 
@@ -606,7 +610,7 @@ class Node(ValueRow, PosRow):
                        self._ctx,
                        value,
                        **dhkw(kw))
-    super(Node, self).__init__(**kw)
+    super(NodeRow, self).__init__(**kw)
     self._instantiate_attr_classes()
 
 
@@ -631,6 +635,7 @@ class Node(ValueRow, PosRow):
                                 ids,
                                 **dhkw(kw))
 
+
   @classmethod
   def by_guid(cls, ids, **kw):
     dicts = cls._by_guid(ids, **kw)
@@ -638,7 +643,6 @@ class Node(ValueRow, PosRow):
       return [cls(_row=row) for row in dicts]
     else:
       return cls(_row=dicts[0])
-
 
 
   def move(self, new_parent, **kw):
@@ -666,13 +670,14 @@ class Node(ValueRow, PosRow):
         raise exc.WillNotUpdateStaleNode(node)
 
     self.old_value = self.value
-    super(Node, self).save(*kw)
+    super(NodeRow, self).save(*kw)
     return self
 
 
   class List(List):
+    # TODO merge this with Relation.List
     def _wrap_result(self, *args, **kw):
-      return super(Node.List, self)._wrap_result(*args, parent=self._owner, **kw)
+      return super(NodeRow.List, self)._wrap_result(*args, parent=self._owner, **kw)
 
 
     def _get_page(self, *args, **kw):
@@ -685,12 +690,17 @@ class Node(ValueRow, PosRow):
 
 
 
-class Prop(ValueRow, BaseIdRow):
+class PropRow(BaseIdRow, ValueRow):
   _table = prop
+
 
   def __init__(self, **kw):
     self.ignore_remove_race = False
-    super(Prop, self).__init__(**kw)
+    super(PropRow, self).__init__(**kw)
+
+
+  def shift(self):
+    raise AttributeError("shift not implemented for PropRows")
 
 
   def _get(self, **kw):
@@ -711,27 +721,29 @@ class Prop(ValueRow, BaseIdRow):
     was = self.ignore_remove_race
     if ignore_remove_race is not None:
       self.ignore_remove_race = ignore_remove_race
-    super(Prop, self).remove(**kw)
+    super(PropRow, self).remove(**kw)
     self.ignore_remove_race = was
 
 
   def save(self, **kw):
     # TODO store_on_node changes
     ret = prop.set(db.pool, self.base_id, self._ctx, self.value, dhkw(kw))
-    super(Prop, self).save(**kw)
+    super(PropRow, self).save(**kw)
     return ret
 
 
 
-class String(Prop):
+class String(PropRow):
   schema = unicode 
 
-  class index(object):
-    unique = 'unique'
-    unique_to_parent = 'unique_to_parent'
-    prefix = 'prefix'
-    phonetic = 'phonetic'
-  
+
+  class Field(Field):
+    class index(object):
+      unique = 'unique'
+      unique_to_parent = 'unique_to_parent'
+      prefix = 'prefix'
+      phonetic = 'phonetic'
+
 
   @classmethod
   def cls_for_field(cls, field):
@@ -746,14 +758,15 @@ class String(Prop):
     if lookup == Search.index.unique_to_parent:
       cls.unique_to_parent = True
 
-    if field.kwargs.get('unicode') === False:
+    if field.kwargs.get('unicode') == False:
       cls.schema = str
-  return cls
+    return cls
+
 
 
 class UniqueString(String, LookupRow):
   _table = alias
-  unique_to_parent = None
+  unique_to_parent = False
 
 
   def __call__(self, value=_missing, **kwargs):
@@ -799,9 +812,10 @@ class UniqueString(String, LookupRow):
       # TODO pass in the alias to hydrate it on the Node instance
       return cls.base_cls.by_guid(row_alias['base_id'])
 
+
   @classmethod
   def batch(cls):
-    ''' TODO w/ Node.ids.batch'''
+    ''' TODO w/ NodeRow.ids.batch'''
     pass
 
 
@@ -815,6 +829,7 @@ class UniqueString(String, LookupRow):
 
 class SearchString(String, LookupRow):
   _table = name
+
 
   @classmethod
   def search(cls, value, **kw):
@@ -843,9 +858,52 @@ class SearchString(String, LookupRow):
 
 
 
-class BitsProxy(object):
-  ''' Lives on each Object instance, manages modification of the instance's 
-  flags set via the instance class's Bits() map.'''
+class Bits(Type):
+  ''' Bits is special case type exposing the smallint (2 bytes) flags column of 
+  every underlying datahog row as a collection of Int, Enum, and Bool fields. Its
+  intent is to make the storage of light metadata less network intensive.
+
+  # Defining a Bits interface:
+
+  class User(NodeRow):
+    meta = Bits.Field() # NodeRow subclasses must create the field explicitly
+    meta.role = Enum.Field('USER', 'ADMIN', 'STAFF')
+
+    email = String(index=String.index.unique)
+
+    # subclasses of PropRow and RelIdRow have a Bits.Field() instance
+    # assigned to .bits by default
+    email.bits.verification_status = Enum.Field('UNSENT', 'SENT', 'CONFIRMED')
+
+    # You can also move the Bits.Field() to another attribute,
+    # and re-assign another type to .bits.
+    email.meta = Bits.Field()
+    email.meta.primary = Bool.Field()
+    email.bits = [Some.Field()]
+
+    # Now that you've seen Bool and Enum, let's look at the Int field:
+    password = String()
+    password.bits.max_val_int = Int.Field(max_val=7)
+    password.bits.fix_bit_int = Int.Field(bits=3)
+
+  # Now, let's look at consumption:
+
+  user = User()
+
+  # calling the bits field with keyword argument(s) will update the flags column
+  # in the user's database row
+  user.bits(role=User.bits.role.admin)
+
+  # as will calling save() on the object that owns the Bits() field
+  user.bits.role = User.bits.role.user
+  user.save()
+
+  # On that note, here's one example that might be surprising until you wrap 
+  # your head around the underlying storage model
+  user.email.bits.verification_status = 'sent'
+  user.email.save() # saves the changes made to the bits field, 
+                    # and to user.email.value
+  '''
   def __init__(self, owner=None, fields=None):
     self._owner = weakref.ref(owner) 
 
@@ -874,171 +932,160 @@ class BitsProxy(object):
 
 
 
-class BitRange(object):
-  ''' A BitRange instance lives inside a BitField instance lives on an Object
-  subclass (not instance).'''
+  class Field(object):
+    max_bits = 16
 
-  def __init__(self, max_val, default=0):
-    self.default = default
-    self.max_val = max_val
-    self.size = int(math.ceil(math.log(self.max_val + 1, 2)))
-
-
-  def value(self, int):
-    return int
+    def __init__(self, *args):
+      self.next_free_bit = 0
+      self.frozen = False
+      self.ranges = {} # {'rangeName': (bitRange, flagSet} where flagSet
+                       # is a set of bit positions occupied by the range
 
 
-  def int(self, value):
-    if value is not int or value > self.max_val:
-      raise ValueError("%s is to large a value for %s" % (value, self))
-    return value
+    def __setattr__(self, name, val):
+      super(Bits.Field, self).__setattr__(name, val)
+      if isinstance(val, Bits.Field.BitRange):
+        self.define_range(name, val)
 
 
-
-class Int(BitRange):
-  def __init__(self, max_val=None, bits=None, default=0):
-    max_val = max_val and max_val or (math.pow(2, bits) - 1)
-    super(Int, self).__init__(max_val, default)
-    
-
-
-class Enum(BitRange):
-  def __init__(self, *enum_strs):
-    types = set(type(s) for s in enum_strs)
-    if len(types) != 1 or types.pop() != str:
-        raise TypeError('Enum expects a list of strings.')
-
-    self.enum_strs = enum_strs
-    for enum_str in self.enum_strs:
-      setattr(self, enum_str, enum_str)
-
-    super(Enum, self).__init__(max_val=len(self.enum_strs))
-  
-
-  def value(self, int):
-    return self.enum_strs[int]
-
-
-  def int(self, value):
-    return self.enum_strs.index(value)
-
-
-
-class Bool(BitRange):
-  def __init__(self, default=False):
-    if type(default) is not bool:
-      raise TypeError("bool expects a boolean default value.")
-    super(Bool, self).__init__(1, default)
-
-
-  def value(self, int):
-    return bool(int)
-
-
-  def int(self, value):
-    if not isinstance(value, bool):
-      raise ValueError("%s expects bool, got %s" % (self, value))
-    return int(value)
-
-
-
-class Bits(object):
-  ''' Each Node, Alias, Property, and Relationship has a 16-bit integer field
-  that can be packed with a collection of short ints, enums, and booleans.
-
-  Its intent is to make the storage of light metadata less network intensive. 
-
-  class User(Node):
-    bits = Bits(store_on_node=True) 
-    bits.role = Enum('user', 'admin', 'staff')
-
-    email = Alias()
-    email.bits.verified = Bool(False)
-
-    password = String()
-    password.bits.recent_failed_logins = Int(max_val=7)
-
-  user = User()
-
-  # calling with value(s) will save the values to the database
-  user.bits(role=User.bits.role.admin)
-
-  # as will calling save() on the object that owns the Bits() field
-  user.email().bits.verified = True
-  user.save()
-  '''
-  max_bits = 16
-
-
-  def __init__(self):
-    self.next_free_bit = 0
-    self.frozen = False
-    self.ranges = {} # {'rangeName': (bitRange, flagSet} where flagSet
-                     # is a set bit positions occupied by the range
-
-
-  def __setattr__(self, name, val):
-    super(Bits, self).__setattr__(name, val)
-    if isinstance(val, BitRange):
-      self.define_range(name, val)
-
-
-  def get_range_value(self, name, flags):
-    brange = self.bitRanges[name]
-    int = reduce(lambda x, y: x | (1 << y), [b for b in brange.range if b in flags], 0)
-    return brange.value(int)
+    def get_range_value(self, name, flags):
+      brange = self.bitRanges[name]
+      int = reduce(lambda x, y: x | (1 << y), [b for b in brange.range if b in flags], 0)
+      return brange.value(int)
 
   
-  def set_range_value(self, name, value, flags):
-    flagSet, brange = self.ranges[name]
-    int = brange.int(value) << flagSet[0]
-    for flag in flagSet:
-      if flag & int:
-        flags.add(flag)
-      else:
-        flags.remove(flag)
-    
-
-  def define_range(self, name, brange):
-    if self.frozen:
-      raise Exception("Can't add ranges after class definition.")
-    if self.next_free_bit + brange.size > self.max_bits:
-      raise exceptions.FlagFieldDefOverflow
-    self.ranges[name] = (brange, set(range(self.next_free_bit, brange.size)))
-    
-
-  def freeze(self, ctx):
-    self.frozen = True
-    for name, brange in self.ranges.iteritems():
-      flagSet = brange[0]
+    def set_range_value(self, name, value, flags):
+      flagSet, brange = self.ranges[name]
+      int = brange.int(value) << flagSet[0]
       for flag in flagSet:
-        const.flag.set_flag(flag + 1, ctx)
+        if flag & int:
+          flags.add(flag)
+        else:
+          flags.remove(flag)
+    
+
+    def define_range(self, name, brange):
+      if self.frozen:
+        raise Exception("Can't add ranges after class definition.")
+      if self.next_free_bit + brange.size > self.max_bits:
+        raise exceptions.FlagFieldDefOverflow
+      self.ranges[name] = (brange, set(range(self.next_free_bit, brange.size)))
+    
+
+    def freeze(self, ctx):
+      self.frozen = True
+      for name, brange in self.ranges.iteritems():
+        flagSet = brange[0]
+        for flag in flagSet:
+          const.flag.set_flag(flag + 1, ctx)
+
+
+    def __call__(self, **kwargs):
+      ''' E.g.:
+      bits = User.bits(role='admin')
+      user = User(bits=bits)'''
+      row_flags = set()
+      for key, val in kwargs.iteritems():
+        self.set_range_value(key, val, row_flag)
+      return row_flags
+
+
+    class BitRange(object):
+      ''' Base class for the special-case field types used to defines
+      a Bits.Field() interface. '''
+      def __init__(self, max_val, default=0):
+        self.default = default
+        self.max_val = max_val
+        self.size = int(math.ceil(math.log(self.max_val + 1, 2)))
+
+
+      def value(self, int):
+        return int
+
+
+      def int(self, value):
+        if value is not int or value > self.max_val:
+          raise ValueError("%s is to large a value for %s" % (value, self))
+        return value
 
 
 
-
-class Bool(Prop):
-  schema = bool
-
-
-
-class Int(Prop):
-  schema = int
+    class Int(BitRange):
+      def __init__(self, max=None, bits=None, default=0):
+        max = max and max or (math.pow(2, bits) - 1)
+        super(Bits.Field.Int, self).__init__(max, default)
+    
 
 
+    class Enum(BitRange):
+      def __init__(self, *enum_strs):
+        types = set(type(s) for s in enum_strs)
+        if len(types) != 1 or types.pop() != str:
+          raise TypeError('Enum expects a list of strings.')
 
-class Bits(Int):
+        self.enum_strs = enum_strs
+        for enum_str in self.enum_strs:
+          setattr(self, enum_str, enum_str)
+
+        super(Bits.Field.Enum, self).__init__(max_val=len(self.enum_strs))
+  
+
+      def value(self, int):
+        return self.enum_strs[int]
+
+
+      def int(self, value):
+        return self.enum_strs.index(value)
+
+
+
+    class Bool(BitRange):
+      def __init__(self, default=False):
+        if type(default) is not bool:
+          raise TypeError("bool expects a boolean default value.")
+        super(Bits.Field.Bool, self).__init__(1, default)
+
+
+      def value(self, int):
+        return bool(int)
+
+
+      def int(self, value):
+        if not isinstance(value, bool):
+          raise ValueError("%s expects bool, got %s" % (self, value))
+        return int(value)
+
+
+
+class Node(NodeRow):
   pass
 
 
 
-class Float(Prop):
+class Prop(PropRow):
+  pass
+
+
+
+class Float(PropRow):
   schema = float
 
 
 
-class Enum(Prop):
+class Enum(PropRow):
   schema = []
 
 
 
+class Bool(PropRow):
+  schema = bool
+
+
+
+class Object(PropRow):
+  schema = dict
+
+
+
+class Int(PropRow):
+  schema = int

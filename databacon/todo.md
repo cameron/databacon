@@ -2,6 +2,11 @@
 
 ## Python API
 
+# On Deck Dep Chain
+
+- on_node=True storage
+- Class.bits(preset='values')
+
 ### Cleanup
 - unify String, Bool, Int, Bits, Float, Object behind Prop
 - implement fields as descriptors

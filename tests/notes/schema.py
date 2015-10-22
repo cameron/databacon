@@ -1,7 +1,3 @@
-# TODO 
-# these imports, while sharing the name of classes in the types.py, are in fact
-# a different beast, representing a field that will become a class defined in types.py.
-# E.g., in databacon/__init__, `Object = functools.partial(FieldFactory, types.Object)`
 import databacon as db
 
 

@@ -1,20 +1,15 @@
 from databacon import (
   Node,
-  Flags,
   Bool,
   Int, 
   Enum,
-  Alias,
-  Enum,
   String,
   Bits,
-  Type,
-  Name,
-  ConnectionPool,
+  connect,
 )
 
 
-ConnectionPool({
+connect({
   'shards': [{
     'shard': 0,
     'count': 4,
@@ -30,68 +25,51 @@ ConnectionPool({
 })
 
 
+                            
 class User(Node):
-  bits = Bits.Field(store_on_row=True)
-  bits.newsletter_sub = Bool.Field(default=True)
-  bits.role = Enum.Field('ADMIN', 'STAFF', 'USER')
-  bits.corpus_count = Int.Field(bits=8) 
-  bits.alternate_corpus_count = Int.Field(max=5) 
-  username = String.Field(lookup=String.index.unique)
-  emails = [String.Field(lookup=String.index.unique)]
-  emails.bits.verification_status = Enum.Field('UNSENT', 
-                                               'SENT', 
-                                               'RESENT',
-                                               'CONFIRMED')
-  password = String.Field()
-  password.bits.two_factor = Bool.Field(default=False)
-  corpora = [FutureType('Corpus').Field()]
-
+  bits = Bits()
+  bits.newsletter_sub = Bits.Bool(default=True)
+  bits.role = Bits.Enum('ADMIN', 'STAFF', 'USER')
+  bits.corpus_count = Bits.Int(bits=8) 
+  bits.alternate_corpus_count = Bits.Int(max=5) 
+  username = String(lookup=String.index.unique)
+  emails = [String(lookup=String.index.unique)]
+  emails.bits.verification_status = Bits.Enum('UNSENT', 
+                                              'SENT', 
+                                              'RESENT',
+                                              'CONFIRMED')
+  password = String()
+  password.bits.two_factor = Bits.Bool(default=False)
+  corpora = [Node('Corpus')]
+  corpora.bits.hidden = Bits.Bool()
 
 
 class Corpus(Node):
-  user = User.Field(null=False, shard_afinity=True, relation=User.corpora)
-  docs = [FutureType('Doc').Field()]
-  terms = [FutureType('Term').Field()]
-
+  user = User(null=False, shard_afinity=True, relation=User.corpora)
+  docs = [Node('Doc')]
+  terms = [Node('Term')]
 
 
 class Doc(Node):
   class file(Object):
-    path = String.Field(null=False)
-    updated = Date.Field()
-  word_count = Int.Field(bits=16, store_on_row=True)
-  corpus = Corpus.Field(null=False, shard_affinty=True, relation=Corpus.docs)
-  title = String.Field(index=String.index.phonetic, loose=True)
-  scores = [FutureType('Doc').Field()]
-  scores.similarity = Int.Field(bits=16, store_on_row=True)
-  terms = [FutureType('Term').Field()]
-  terms.bits.count = Int.Field(bits=12)
+    path = String(null=False)
+    updated = Date()
+  bits = Bits()
+  bits.word_count = Bits.Int()
+  bits.file_ok = Bits.Bool()
+  corpus = Corpus(null=False, shard_affinty=True, relation=Corpus.docs)
+  title = String(index=String.index.phonetic, loose=True)
+  scores = [Node('Doc')]
+  scores.bits.similarity = Bits.Int(bits=16)
+  terms = [Node('Term')]
+  terms.bits.count = Bits.Int(bits=12)
 
-''' Field args
-
-- shard_affinity (NodeMC:finalize_attrs)
-  - determines the _parent attr 
-  - if defined on a FutureType, the owner's dh context can't be defined until the 
-    the FutureType is resolved
-- relation (NodeMC:finalize_attrs)
-  - identifies an existing relation to subclass
-- bits, max (Int)
-- default value (ValueRow)
-- store_on_row (ValueRow)
-- null (BaseIdRow, _owner)
-  - _owner can't be created without an assigned value/rel
-    - which can't be removed without a replacement
-    - also implies that the constructor needs to either
-      - not save automatically (ew)
-      - accept field values as kwargs and assign to self
-'''
 
 class Term(Node):
-  corpus1 = Corpus.Field(null=False, shard_affinity=True, relation=Corpus.terms)
-  corpus2 = Corpus.Field( *args, **kwargs)
-  deprecation_warning(corpus2, 'Just a warning')
-  string = String.Field(lookup=String.index.unique_to_parent)
-  doc_count = Int.Field(store_on_row=True)
-  docs = [Doc.Field(relation=Doc.terms)]
-  different_docs = [Doc.Field()]
+  corpus1 = Corpus(null=False, shard_affinity=True, relation=Corpus.terms)
+  string = String(lookup=String.index.unique_to_parent)
+  meta = Bits()
+  meta.doc_count = Bits.Int()
+  docs = [Doc(relation=Doc.terms)]
+  different_docs = [Doc()]
 

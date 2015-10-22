@@ -60,7 +60,7 @@ assert e != None
 
 # Forcing an update should not fail
 doc0(file_meta={'path': 'brute force'}, force=True)
-assert Doc.by_guid(doc0.guid).value == doc0.value
+assert Doc.by_guid(doc0.guid).file_meta == doc0.file_meta
   
 
 ###
@@ -81,10 +81,6 @@ assert User.by_guid(user0.guid).flags.role == 'admin'
 
 # Retrieving values
 assert user0.flags.role == user0.flags('role') == 'admin'
-
-# Passing flags at instance creation (more examples of this later)
-user_flags = User.flags(role='user')
-user2 = User(flags=user_flags)
 
 
 ###
@@ -110,10 +106,10 @@ for doc in Doc.by_title(title):
     break
 assert found_it
 
-# Plural Alias/Name (& and passing flags to object creation)
-email_flags = User.emails.flags(verification_status='sent')
+# Plural Alias/Name
 address = uniq("cam@")
-user0.emails.add(address, flags=email_flags)
+user0.emails.add(address)
+user0.emails.bits.verification_status = 'SENT'
 
 # Visit plural alias/names
 for email in user0.emails():
@@ -127,6 +123,7 @@ assert corpus1.terms.by_string(word) == None
 # Property
 pass_flags = User.password.flags(two_factor=True)
 user0.password('new_password', flags=pass_flags)
+user0.password.bits.two_factor = True
 assert user0.password().value == 'new_password'
 
 user0.password('newer_password') # replaces 'new_password'
