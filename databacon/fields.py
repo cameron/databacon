@@ -1,7 +1,7 @@
 # fields.py
-# 
+#
 # Methods for defining datahog types (flags, relationships, properties, aliases,
-# and names) as methods on databacon classes. 
+# and names) as methods on databacon classes.
 
 import math
 import functools
@@ -15,7 +15,7 @@ import datahog_wrappers as dhw
 import flags
 
 
-__all__ = ['prop', 'relation', 'lookup', 'children']
+__all__ = ['prop', 'relation', 'lookup', 'children', 'lock']
 
 
 subcls_id_ctr = 0
@@ -25,10 +25,10 @@ def subclass(base, attrs=None):
   return type('%s-rename-%s' % (base.__name__, subcls_id_ctr), (base,), attrs or {})
 
 
-def prop(schema):
+def prop(schema=None, base=dhw.Prop):
   if not _validate_schema(schema):
     raise TypeError("prop expects a valid mummy schema")
-  return subclass(dhw.Prop, {'schema': schema})
+  return subclass(base, { 'schema': schema })
 
 
 def relation(target):
@@ -83,3 +83,6 @@ def children(child_cls):
   elif isinstance(child_cls, str):
     attrs['_pending_cls_name'] = child_cls
   return subclass(dhw.Node.List, attrs)
+
+def lock():
+  return prop(int, base=dhw.Lock)

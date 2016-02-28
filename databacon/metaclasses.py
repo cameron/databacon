@@ -1,7 +1,7 @@
 # metaclasses.py
 #
 # Responsible for taking a user-defined subclass of databacon.Entity/Node,
-# creating the appropriate datahog context values, and returning 
+# creating the appropriate datahog context values, and returning
 # a class that behaves as specified.
 
 import inspect
@@ -15,18 +15,9 @@ import exceptions as exc
 
 def only_for_user_defined_subclasses(mc):
   '''
-  # WHAT
-  This metaclass decorator uses a blacklist of databacon's concrete classes
-  to bypass the __new__ method that the metaclasses rely on to do their work.
-
-  # WHY
-  The purpose of the metaclasses defined herein is to manage construction of
-  user-defined subclasses of concrete databacon classes such as Entity, Node,
-  Alias, et al. As such, the metaclass operations are inappropriate during the
-  creation databacon's concrete classes, and should not be applied. 
-  
-  Q: could this be eliminated by attaching a metaclass after databacon classes
-  are created?'''
+  Stops metaclasses from creating datahog context data for databacon's intermediate
+  classes (Node et al).
+  '''
 
   do_not_apply_metaclass = [
     'Node', 'Entity', 'Prop', 'Alias', 'Name', 'Relation', 'LookupDict',
@@ -72,7 +63,9 @@ class DictMC(type):
   @classmethod
   def define_dh_ctx(mcls, cls):
     DictMC.ctx_counter += 1
-    dh.context.set_context(DictMC.ctx_counter, 
+    print 'define dh ctx', cls.__name__, DictMC.ctx_counter
+    print ' ', cls._meta
+    dh.context.set_context(DictMC.ctx_counter,
                            DictMC.to_const[cls._table], cls._meta)
     setattr(cls, '_ctx', DictMC.ctx_counter)
     cls.flags.freeze(cls._ctx)
@@ -87,7 +80,8 @@ class RelationMC(DictMC):
 
   @classmethod
   def define_dh_ctx(mcls, cls):
-    ''' Runs once per accessor defined for a relationship. '''
+    ''' Define the datahog context necessary to support a relationship between
+    two Nodes. Happens at runtime, once per unique relationship.'''
     if cls.base_cls and cls.rel_cls:
       cls._meta['base_ctx'] = cls.base_cls._ctx
       cls._meta['rel_ctx'] = cls.rel_cls._ctx
@@ -99,7 +93,7 @@ class ValueDictMC(DictMC):
     int: dh.storage.INT,
     str: dh.storage.STR,
     unicode: dh.storage.UTF,
-    None: dh.storage.NULL
+    None: dh.storage.NULL,
   }
 
 
@@ -138,7 +132,7 @@ class GuidMC(DictMC):
 
 
   def resolve_pending_cls(cls):
-    ''' Some relationships and lists are awaiting the creation of a 
+    ''' Some relationships and lists are awaiting the creation of a
     rel_cls/of_type class. '''
 
     cls_name = cls.__name__
@@ -152,16 +146,16 @@ class GuidMC(DictMC):
       for list_cls in lists_pending_cls[cls_name]:
         list_cls.of_type = cls
       del lists_pending_cls[cls_name]
-  
+
 
   def finalize_attr_classes(cls, attrs):
     ''' For each attr class that is a datahog_wrapper.* subclass:
-    - assign a more meaningful class name 
+    - assign a more meaningful class name
     - assign a base_ctx + define a datahog context
     '''
-    
+
     for attr, ctx_cls in attrs.iteritems():
-      
+
       # Ducktype subclasses of datahog_wrappers.{BaseIdDict, List}
       # that need datahog contexts, and skip the rest.
       if not (hasattr(ctx_cls, '_ctx') or hasattr(ctx_cls, 'of_type')):
@@ -184,9 +178,9 @@ class GuidMC(DictMC):
           #
           # ...so that we can give the List subclass a more meaningful name
 
-          list_cls.__name__ = '%s%s%s' % (attr.capitalize(), 
+          list_cls.__name__ = '%s:%s:%s' % (attr,
                                           ctx_cls.__bases__[0].__name__,
-                                          'List')
+                                          'list')
           list_cls.__module__ = cls.__module__
         else:
           lists_pending_cls\
@@ -199,8 +193,8 @@ class GuidMC(DictMC):
       #   'Relation-0' -> 'DocTermsRelation'
       #   'Alias-0' -> 'UserUsernameAlias'
       if 'rename' in ctx_cls.__name__:
-        ctx_cls.__name__ = '%s%s' % (attr.capitalize(),
-                                     ctx_cls.__name__.split('-')[0])
+        ctx_cls.__name__ = '%s:%s' % (attr,
+                                      ctx_cls.__name__.split('-')[0].lower())
         ctx_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
 
 
@@ -215,8 +209,8 @@ class GuidMC(DictMC):
 
         ctx_cls.__metaclass__.define_dh_ctx(ctx_cls)
 
-        
-        # setup class methods for looking up 
+
+        # setup class methods for looking up
         # instances by name and alias
         if has_ancestor_named(ctx_cls, 'LookupDict'):
           setattr(cls, 'by_%s' % attr, ctx_cls.lookup)
@@ -235,7 +229,7 @@ class NodeMC(ValueDictMC, GuidMC):
   def __new__(mcls, name, bases, attrs):
     args = [name, bases, attrs]
 
-    if not has_ancestor_named(attrs['parent'], ('Node', 'Entity')):
+    if 'parent' in attrs and not has_ancestor_named(attrs['parent'], ('Node', 'Entity')):
       raise exc.InvalidParentType(*args)
 
     return super(NodeMC, mcls).__new__(mcls, *args)
@@ -249,7 +243,7 @@ class ListMC(type):
 
 
 def has_ancestor_named(classes, names):
-  ''' String named-based impl of issubclass to circumvent circular import woes 
+  ''' String named-based impl of issubclass to circumvent circular import woes
   in NodeDictMC, which wants to refer to the Entity class. In a growing codebase
   where classes share the same name (but different module paths), this might
   cause some serious head scratching...'''
@@ -261,5 +255,3 @@ def has_ancestor_named(classes, names):
       return True
     bases.extend(list(base.__bases__))
   return False
-
-

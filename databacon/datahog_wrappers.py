@@ -1,6 +1,8 @@
+# TODO this feels awful
+import greenhouse
 import math
 import functools
-
+from contextlib import contextmanager
 from datahog import node, entity, alias, name, prop, relationship
 
 import exceptions as exc
@@ -12,9 +14,9 @@ _missing = node._missing
 guid_prefix = lambda dhw, s: '%s:%s' % (dhw.guid, s)
 
 class Dict(object):
-  ''' base class for all classes that wrap datahog dicts, which are 
+  ''' base class for all classes that wrap datahog dicts, which are
   stored at `self._dh`.
-  
+
   all datahog objects share a flags attr and a remove method. they all also
   have a context value (a type identifier defined by databacon), and a table
   (e.g., node).
@@ -24,8 +26,8 @@ class Dict(object):
   '''
 
   _table = None
-  _ctx = None 
-  _remove_arg_strs = None 
+  _ctx = None
+  _remove_arg_strs = None
   _id_arg_strs = None
   _dh = None
 
@@ -33,7 +35,7 @@ class Dict(object):
     self._dh = dh or {}
     self.flags = flags or Flags(self)
     self.__ctx = None
-        
+
   @property
   def _ctx(self):
     return self.__ctx
@@ -53,15 +55,15 @@ class Dict(object):
 
 
   def remove(self, **kw):
-    args = self._ids_args + [self._ctx] + self._remove_args
+    args = self._id_args + [self._ctx] + self._remove_args
     return self._table.remove(db.pool, *args, **dhkw(kw))
 
-  
+
   @classmethod
   def _cls_by_name(cls, cls_name):
     return cls.__metaclass__.user_cls_by_name[cls_name]
 
-  
+
   def save_flags(self, add, clear, **kw):
     args = [db.pool] + self._id_args + [self._ctx, add, clear]
     self._table.set_flags(*args, **dhkw(kw))
@@ -101,6 +103,10 @@ class List(object):
         yield self._wrap_result(result, **dhkw(kw, blacklist=True))
 
 
+  def __contains__(self, **kw):
+    raise "Not implemented"
+
+
   def _wrap_result(self, result, **kw):
     return self.of_type(dh=result, owner=self._owner, **kw)
 
@@ -123,7 +129,7 @@ class List(object):
 
 
   def add(self, value, flags=None, **kw):
-    return self._add(db.pool, 
+    return self._add(db.pool,
                      self._owner.guid,
                      self.of_type._ctx,
                      value,
@@ -151,6 +157,7 @@ class ValueDict(Dict):
     super(ValueDict, self).__init__(*args, **kwargs)
     self.old_value = self.value
 
+
   def default_value(self):
     return ({
       int: 0,
@@ -158,7 +165,7 @@ class ValueDict(Dict):
       unicode: u'',
       type(None): None,
     }).get(type(self.schema) is type and self.schema or type(self.schema), None)
-    
+
 
   @property
   def value(self):
@@ -170,26 +177,32 @@ class ValueDict(Dict):
     self._dh['value'] = value
 
 
+  # TODO resolve asmmetry in API:
+  # - prop().value                                <- return value is self
+  # - inserted, updated = prop('something')       <- return value is tuple
   def __call__(self, value=_missing, flags=None, force=False, **kwargs):
     if value is _missing:
-      self._dh = self._get(**kwargs)
+      self._dh = self._get(**kwargs) or self._dh
       return self
 
     self.value = value
-    self.save(force=force)
-    
+    inserted, updated = self.save(force=force)
+
     if flags:
       self.flags = flags
-      # TODO this feels WET 
+      # TODO this feels WET
       self._dh['flags'] = flags._tmp_set
       self.flags._owner = self
+      # TODO
+      # is this making a network call that we could combine with save?
       self.flags.save()
-    return self
+
+    return inserted, updated
 
   def increment(self, **kw):
     if not self.schema is int:
       raise exc.CannotIncrementNonnumericValue()
-    
+
     args = self._id_args + [self._ctx]
     new_val = self._table.increment(db.pool, *args, **dhkw(kw))
     if new_val is None:
@@ -208,7 +221,7 @@ class ValueDict(Dict):
 class GuidDict(Dict):
   _id_arg_strs = ('guid',)
   _remove_arg_strs = ('guid',)
-  
+
 
   def __init__(self, flags=None, dh=None):
     super(GuidDict, self).__init__(flags=flags, dh=dh)
@@ -227,7 +240,7 @@ class GuidDict(Dict):
     return self._dh['guid']
 
 
-  # TODO 
+  # TODO
   # merge with the child accessors / lists?
   # def children(self, child_cls, **kw):
   #   children, offset = node.get_children(db.pool,
@@ -242,10 +255,10 @@ class GuidDict(Dict):
     ids = type(ids) in (list, tuple) and ids or (ids,)
     if type(ids[0]) not in (list, tuple):
       ids = [(id,cls._ctx) for id in ids]
-    return cls._table.batch_get(db.pool, 
+    return cls._table.batch_get(db.pool,
                                 ids,
                                 **dhkw(kw))
-    
+
 
   @classmethod
   def by_guid(cls, ids, **kw):
@@ -254,7 +267,7 @@ class GuidDict(Dict):
       return [cls(dh=dh) for dh in dicts]
     else:
       return cls(dh=dicts[0])
-    
+
 
 class PosDict(Dict):
 
@@ -262,7 +275,7 @@ class PosDict(Dict):
   def shift(self, *args, **kw):
     args = [db.pool] + self._id_args + [self._ctx] + list(args)
     return self._table.shift(*args, **dhkw(kw))
-    
+
 
 class BaseIdDict(PosDict):
   _id_arg_strs = ('base_id',)
@@ -271,7 +284,9 @@ class BaseIdDict(PosDict):
 
   def __init__(self, owner=None, dh=None):
     self._owner = owner
-    dh = dh or {'base_id': owner.guid}
+    if not dh:
+      dh = {}
+    dh['base_id'] = owner.guid
     super(BaseIdDict, self).__init__(dh=dh)
 
 
@@ -309,17 +324,20 @@ class Relation(BaseIdDict):
     else:
       guid, cls = self.base_id, self.base_cls
     return cls(dh=cls._table.get(
-      db.pool, 
+      db.pool,
       guid,
       cls._ctx, **dhkw(kw)))
 
 
   class List(List):
 
+    def __contains__(self, obj):
+      return bool(self._table.get(db.pool, self._ctx, self._owner.id, obj._dh['guid'], **kw))
+
 
     def _wrap_result(self, result, nodes=False, **kw):
       if nodes:
-        return (self.of_type(dh=result[0], owner=self._owner), 
+        return (self.of_type(dh=result[0], owner=self._owner),
                 self.of_type.base_cls(dh=result[1], owner=self._owner))
       return self.of_type(dh=result, owner=self._owner)
 
@@ -352,7 +370,7 @@ class Relation(BaseIdDict):
         base_id, rel_id = self._owner.guid, db_instance.guid
       else:
         base_id, rel_id = db_instance.guid, self._owner.guid
-      return relationship.create(db.pool, 
+      return relationship.create(db.pool,
                                  self.of_type._ctx,
                                  base_id,
                                  rel_id,
@@ -387,24 +405,24 @@ class Entity(GuidDict):
         self._ctx, **dhkw(kw)))
 
 
-class Node(GuidDict, ValueDict, PosDict): 
+class Node(GuidDict, ValueDict, PosDict):
   __metaclass__ = metaclasses.NodeMC
   _table = node
   _save = node.update
-  parent = None 
+  parent = None
 
 
   def __init__(self, value=_missing, parent=None, dh=None, **kw):
     self.parent = parent
     if not dh:
-      if value is _missing:
-        value = self.default_value()
-      dh = node.create(db.pool, 
-                       parent.guid,
-                       self._ctx,
-                       value,
-                       **dhkw(kw))
+      self.create(value, parent, **kw)
     super(Node, self).__init__(dh=dh)
+
+  def create(self, value=_missing, parent=None, **kw):
+    if value is _missing:
+      value = self.default_value()
+    dh = node.create(db.pool, self._ctx, value, parent.guid, **dhkw(kw))
+    print dh
 
 
   def move(self, new_parent, **kw):
@@ -510,7 +528,7 @@ class Name(LookupDict):
 
 
   def save(self, **kw):
-    # it might happen that the user saves before fetching, 
+    # it might happen that the user saves before fetching,
     # in which case we need to remove the existing entry
     if not self._dh['value']:
       existing_name = name.list(db.pool, self.base_id, self._ctx, limit=1)
@@ -539,6 +557,7 @@ class Prop(ValueDict, BaseIdDict):
 
 
   def remove(self, ignore_remove_race=None, **kw):
+    # TODO this remove race stuff is silly
     was = self.ignore_remove_race
     if ignore_remove_race is not None:
       self.ignore_remove_race = ignore_remove_race
@@ -551,6 +570,63 @@ class Prop(ValueDict, BaseIdDict):
     return prop.set(db.pool, self.base_id, self._ctx, self.value)
 
 
+class Lock(Prop):
+  schema = int
+  value = 0
+
+  '''
+  eg:
+
+  ```class Door(db.Node):
+    lock = db.lock()
+
+  with modelInstance.lock():
+    # ...
+
+  unlock = inst.lock()
+  # ...
+  unlock()```
+  '''
+
+  class ContextManager(object):
+    def __init__(self, lock):
+      self.lock = lock
+
+      # lock here and not in __enter__ to support the simpler
+      # consumption case: unlock = lock()
+      self.lock.lock()
+
+
+    def __enter__(self):
+      pass
+
+
+    def __exit__(self, *args):
+      self.lock.unlock()
+
+
+    def __call__(self):
+      self.lock.unlock()
+
+
+  def __call__(self, *args, **kwargs):
+    return Lock.ContextManager(self)
+
+
+  def lock(self, retry_interval=1, max_retries=5):
+    for attempt in range(max_retries):
+      locked, busy = self.save()
+      if locked:
+        return self.unlock
+      # TODO does this actually belong here??
+      greenhouse.pause_for(retry_interval)
+    return
+
+
+  def unlock(self):
+    self.remove()
+
+
 dh_kwargs = ['timeout',
              'forward_index',
              'reverse_index',
@@ -559,12 +635,12 @@ dh_kwargs = ['timeout',
              'limit',
              'start',
              'forward']
-def dhkw(kw, blacklist=False):
-  ''' Intersect or exclude datahog kwargs '''
+def dhkw(kwargs, exclude=False):
+  ''' Intersect or exclude dh_kwargs from kwargs '''
   pass_thru = {}
-  for key, val in kw.iteritems():
-    if key in dh_kwargs and not blacklist:
+  for key, val in kwargs.iteritems():
+    if key in dh_kwargs and not exclude:
       pass_thru[key] = val
-    elif key not in dh_kwargs and blacklist:
+    elif key not in dh_kwargs and exclude:
       pass_thru[key] = val
   return pass_thru
