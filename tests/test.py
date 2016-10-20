@@ -58,11 +58,11 @@ assert e != None
 # Forcing an update should not fail
 doc0({'path': 'brute force'}, force=True)
 assert Doc.by_guid(doc0.guid).value == doc0.value
-  
+
 
 ###
 ### Flags (exists on all DH* instances)
-### 
+###
 
 # Setting and saving
 user0.flags.role = 'user'
@@ -73,7 +73,7 @@ assert fresh.flags.role == user0.flags.role
 assert fresh.flags.newsletter_sub == user0.flags.newsletter_sub
 
 # More concisely (includes a call to .save())
-user0.flags('role', 'admin') 
+user0.flags('role', 'admin')
 assert User.by_guid(user0.guid).flags.role == 'admin'
 
 # Retrieving values
@@ -148,7 +148,7 @@ for rel in doc0.scores():
   assert rel.flags.similarity == score0_int
   assert rel.node().guid == doc1.guid
 
-# Fetch nodes along with the relation 
+# Fetch nodes along with the relation
 for score, node in doc0.scores(nodes=True):
   assert node.guid == score.node().guid
 
@@ -175,7 +175,7 @@ assert term.docs.add(doc0) == False
 # should be the same relationship
 assert term.docs[0].base_id == doc0.guid
 
-# increment() for int schemas 
+# increment() for int schemas
 # (the term's int represents a denormalized count of docs it occurs in)
 term.increment()
 assert corpus0.terms.by_string(word).value == 1
@@ -184,7 +184,7 @@ term.increment()
 assert corpus0.terms.by_string(word).value == 2
 
 # Lookup incoming relationships
-for doc_term_rel in term.docs(): 
+for doc_term_rel in term.docs():
   assert doc_term_rel.flags.count == doc0_term_count
 
 # Lookup incoming relationships and nodes
@@ -194,7 +194,7 @@ for doc_term_rel, doc in term.docs(nodes=True):
 
 #
 # One-sided relationship
-# 
+#
 
 # term.docs has one entry, so let's make sure that it didn't
 # bleed into the separate special_docs relation.
@@ -205,7 +205,7 @@ except IndexError, e:
   exc = e
 assert e != None
 
-# create a special doc relation and make sure it didn't bleed into 
+# create a special doc relation and make sure it didn't bleed into
 # the other docs relation
 term.special_docs.add(doc1)
 for rel in term.docs():
@@ -213,7 +213,6 @@ for rel in term.docs():
 
 # make sure it the relation was added as expected
 assert term.special_docs[0].rel_id == doc1.guid
-
 
 '''
 TODO
@@ -224,4 +223,3 @@ TODO
 - multi page lists
 - plural alias
 '''
-

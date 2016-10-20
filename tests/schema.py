@@ -1,11 +1,12 @@
 import databacon as db
 import mummy
 
+
 db.connect({
   'shards': [{
     'shard': 0,
     'count': 4,
-    'host': '12.12.12.12',
+    'host': '0.0.0.0',
     'port': '6543',
     'user': 'legalease',
     'password': '',
@@ -16,18 +17,19 @@ db.connect({
   'digest_key': 'super secret',
 })
 
+
 class User(db.Entity):
   flags = db.flags()
   flags.newsletter_sub = db.flag.bool(True)
   flags.role = db.flag.enum('admin', 'staff', 'user')
-  flags.corpus_count = db.flag.int(bits=8) 
-  flags.alternate_corpus_count = db.flag.int(max_val=5) 
+  flags.corpus_count = db.flag.int(bits=8)
+  flags.alternate_corpus_count = db.flag.int(max_val=5)
 
   username = db.lookup.alias()
 
   emails = db.lookup.alias(plural=True)
-  emails.flags.verification_status = db.flag.enum('unsent', 
-                                                  'sent', 
+  emails.flags.verification_status = db.flag.enum('unsent',
+                                                  'sent',
                                                   'resent',
                                                   'confirmed')
 
@@ -43,10 +45,11 @@ class Corpus(db.Node):
   docs = db.children('Doc')
 
   # TODO if this accessor is not defined, and the terms.string field
-  # is a db.lookup.alias(uniq_to_parent=True), it's impossible to 
+  # is a db.lookup.alias(uniq_to_parent=True), it's impossible to
   # lookup terms by their string aliases. Either throw an error if the
   # accessor is missing, or automatically generate an accessor.
   terms = db.children('Term')
+
 
 class Doc(db.Node):
   parent = Corpus
@@ -61,10 +64,10 @@ class Doc(db.Node):
 
   title = db.lookup.phonetic(loose=True)
 
-  scores = db.relation('Doc') 
+  scores = db.relation('Doc')
   scores.flags.similarity = db.flag.int(bits=16)
 
-  terms = db.relation('Term') 
+  terms = db.relation('Term')
   terms.flags.count = db.flag.int(bits=12)
 
 
@@ -76,6 +79,6 @@ class Term(db.Node):
   string = db.lookup.alias(uniq_to_parent=True)
 
   # define an accessor for the already-declared relationship Doc.terms
-  docs = db.relation(Doc.terms) 
+  docs = db.relation(Doc.terms)
 
   special_docs = db.relation(Doc)
