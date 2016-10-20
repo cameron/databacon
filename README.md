@@ -20,7 +20,7 @@ The [fat Python client](http://github.com/teepark/datahog) that reads from and w
 
 ### Databacon
 
-Wraps datahog in a beautiful, class-based interface.
+This repo; wraps the datahog library in a beautiful, class-based interface.
 
 ## Example
 
@@ -47,6 +47,11 @@ user0.friends.add(user1)
 
 for friend in user0.friends():
   assert friend.guid == user1.guid
+
+user0.email = 'hi@there.com'
+user0.email.save()
+
+assert User.by_email('hi@there.com').guid == user0.guid
 ```
 There's a more feature-complete example modeling a corpus of documents in [tests/](tests/).
 
@@ -56,6 +61,7 @@ Note the shenanigens w/the datahog dep.
 ```
 git clone http://github.com/teepark/datahog && pushd datahog && git checkout 5d51fc8d9d && popd
 git clone http://github.com/cameron/databacon
+cd databacon
 pip install -r requirements.txt
 pip install -e .../datahog
 docker-compose up
