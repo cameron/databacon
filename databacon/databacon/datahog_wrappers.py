@@ -216,7 +216,7 @@ class GuidDict(Dict):
 
 
   def _instantiate_attr_classes(self):
-    attrs = [a for a in dir(self) if '__' not in a]
+    attrs = [a for a in dir(self) if not a.startswith('_')]
     for attr, val in [(a, getattr(self, a)) for a in attrs]:
       if isinstance(val, type) and issubclass(val, (Dict, List)):
         self.__dict__[attr] = val(owner=self)
@@ -224,7 +224,7 @@ class GuidDict(Dict):
 
   @property
   def guid(self):
-    return self._dh['guid']
+    return self._dh.get('guid', None)
 
 
   # TODO 

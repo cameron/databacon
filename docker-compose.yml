@@ -9,3 +9,12 @@ data:
   image: postgres
   volumes:
     - /var/li/postgresql/9.3/main
+
+databacon:
+  build: ./databacon
+  links:
+    - db
+  volumes:
+    - ./databacon:/src
+  command: "/bin/bash -c 'sleep 99999999999'"
+   

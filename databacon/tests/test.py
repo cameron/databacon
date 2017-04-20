@@ -214,7 +214,7 @@ for rel in term.docs():
 # make sure it the relation was added as expected
 assert term.special_docs[0].rel_id == doc1.guid
 
-'''
+''' 
 TODO
 - test index manipulation for names/aliases/children/rels
   - index/forward_index/reverse_index in create/add calls

@@ -1,0 +1,1 @@
+{ ls /src/databacon; ls /src/tests; } | while true; do entr -d /tests/test.py; done
