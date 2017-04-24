@@ -31,3 +31,7 @@ class UnknownFlagsEnumValue(Exception):
   def __init__(self, flag_name, flag_value, enum_strs):
     self.message = '''`%s` is not in the set of defined enum values for `%s`. Defined 
     values are `%s`.''' % (flag_name, flag_value, enum_strs)
+
+
+class LockAcquisitionTimeout(Exception):
+  message = 'Failed to acquire lock'

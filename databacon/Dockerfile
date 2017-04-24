@@ -13,8 +13,8 @@ RUN python get-pip.py --prefix=/usr/local
 RUN curl -O https://bitbucket.org/eradman/entr/get/1dc74ab543e2.zip
 RUN unzip 1dc74ab543e2.zip && cd eradman-entr-1dc74ab543e2 && ./configure && make && make install
 
-RUN git clone https://github.com/teepark/datahog
-RUN cd datahog; git checkout 5d51fc8d9dc1; python setup.py install
+RUN git clone https://github.com/cameron/datahog
+RUN cd datahog; python setup.py install
 
 ADD requirements.txt /requirements.txt
 

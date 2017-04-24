@@ -7,6 +7,7 @@ db:
 
 data:
   image: postgres
+  container_name: data
   volumes:
     - /var/li/postgresql/9.3/main
 
@@ -16,5 +17,6 @@ databacon:
     - db
   volumes:
     - ./databacon:/src
-  command: "/bin/bash -c 'sleep 99999999999'"
+    - ./datahog:/datahog
+  command: "/bin/bash -c 'cd datahog && python setup.py install && sleep 99999999999'"
    

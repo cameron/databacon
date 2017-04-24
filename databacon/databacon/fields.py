@@ -83,3 +83,7 @@ def children(child_cls):
   elif isinstance(child_cls, str):
     attrs['_pending_cls_name'] = child_cls
   return subclass(dhw.Node.List, attrs)
+
+
+def lock():
+  return subclass(dhw.Lock)

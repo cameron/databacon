@@ -1,6 +1,6 @@
 # metaclasses.py
 #
-# Responsible for taking a user-defined subclass of databacon.Entity/Node,
+# Responsible for taking a user-defined subclass of databacon.Node,
 # creating the appropriate datahog context values, and returning 
 # a class that behaves as specified.
 
@@ -21,7 +21,7 @@ def only_for_user_defined_subclasses(mc):
 
   # WHY
   The purpose of the metaclasses defined herein is to manage construction of
-  user-defined subclasses of concrete databacon classes such as Entity, Node,
+  user-defined subclasses of concrete databacon classes such as Node,
   Alias, et al. As such, the metaclass operations are inappropriate during the
   creation databacon's concrete classes, and should not be applied. 
   
@@ -29,7 +29,7 @@ def only_for_user_defined_subclasses(mc):
   are created?'''
 
   do_not_apply_metaclass = [
-    'Node', 'Entity', 'Prop', 'Alias', 'Name', 'Relation', 'LookupDict',
+    'Node', 'Prop', 'Alias', 'Name', 'Relation', 'LookupDict',
     'ValueDict', 'PosDict', 'BaseIdDict', 'GuidDict', 'Dict', 'List'
   ]
 
@@ -48,7 +48,6 @@ class DictMC(type):
 
   to_const = {
     dh.node: dh.table.NODE,
-    dh.entity: dh.table.ENTITY,
     dh.alias: dh.table.ALIAS,
     dh.prop: dh.table.PROPERTY,
     dh.relationship: dh.table.RELATIONSHIP,
@@ -83,7 +82,6 @@ lists_pending_cls = {}
 
 @only_for_user_defined_subclasses
 class RelationMC(DictMC):
-
 
   @classmethod
   def define_dh_ctx(mcls, cls):
@@ -214,7 +212,6 @@ class GuidMC(DictMC):
         ctx_cls._meta['base_ctx'] = cls._ctx
 
         ctx_cls.__metaclass__.define_dh_ctx(ctx_cls)
-
         
         # setup class methods for looking up 
         # instances by name and alias
@@ -232,15 +229,6 @@ class NodeMC(ValueDictMC, GuidMC):
     return super(NodeMC, mcls).define_dh_ctx(cls)
 
 
-  def __new__(mcls, name, bases, attrs):
-    args = [name, bases, attrs]
-
-    if not has_ancestor_named(attrs['parent'], ('Node', 'Entity')):
-      raise exc.InvalidParentType(*args)
-
-    return super(NodeMC, mcls).__new__(mcls, *args)
-
-
 class ListMC(type):
   def __getattr__(cls, name):
     if name == 'flags':
@@ -250,9 +238,9 @@ class ListMC(type):
 
 def has_ancestor_named(classes, names):
   ''' String named-based impl of issubclass to circumvent circular import woes 
-  in NodeDictMC, which wants to refer to the Entity class. In a growing codebase
-  where classes share the same name (but different module paths), this might
-  cause some serious head scratching...'''
+  in NodeDictMC, which previously wanted to refer to the Entity class. 
+  In a growing codebase where classes share the same name (but different module
+  paths), this might cause some serious head scratching...'''
   bases = list(isinstance(classes, type) and classes.__bases__ or classes)
   names = type(names) is tuple and names or (names,)
   while bases:

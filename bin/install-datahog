@@ -1,0 +1,3 @@
+#! /bin/zsh
+
+cd datahog; while true; do { ls ./**/*py} | entr -c -d dshell databacon_databacon 'cd datahog; python setup.py install; echo "" > .installed'; done

@@ -1,21 +1,7 @@
 
 --create extension if not exists fuzzystrmatch;
 
-create sequence guids maxvalue 72057594037927935 start with 1;
-
-
--- ENTITIES --
-
-create table entity (
-  guid bigint not null default nextval('guids'),
-  flags smallint default 0 not null,
-  time_removed timestamp default null,
-  ctx smallint not null
-);
-
-create unique index entity_guid on entity (
-  guid
-) where time_removed is null;
+create sequence node_ids maxvalue 18014398509481983 start with 1;
 
 
 -- PROPERTIES --
@@ -95,7 +81,7 @@ create index relationship_backward_idx on relationship (
 -- NODES --
 
 create table node (
-  guid bigint not null default nextval('guids'),
+  id bigint not null default nextval('node_ids'),
   flags smallint default 0 not null,
   time_removed timestamp default null,
   ctx smallint not null,
@@ -104,8 +90,8 @@ create table node (
   check (num is null or value is null)
 );
 
-create unique index node_guid on node (
-  guid
+create unique index node_id on node (
+  id
 ) where time_removed is null;
 
 create table edge (
@@ -118,6 +104,10 @@ create table edge (
 
 create index edge_idx on edge (
   base_id, ctx, pos
+) where time_removed is null;
+
+create index edge_child on edge (
+  child_id
 ) where time_removed is null;
 
 
@@ -139,6 +129,8 @@ create index name_idx on name (
 create unique index name_uniq on name (
   base_id, ctx, value
 ) where time_removed is null;
+-- TODO: is this index a great idea? I don't see that this gives us any
+--       better lookups than name_idx, it's only here to enforce uniqueness
 
 create table prefix_lookup (
   value varchar(255) not null,

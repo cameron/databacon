@@ -1,5 +1,24 @@
 #!/usr/bin/env python
 
+import sys 
+
+def info(type, value, tb):
+    if hasattr(sys, 'ps1') or not sys.stderr.isatty():
+    # we are in interactive mode or we don't have a tty-like
+    # device, so we call the default hook
+        sys.__excepthook__(type, value, tb)
+    else:
+        import traceback, pdb
+        # we are NOT in interactive mode, print the exception
+        traceback.print_exception(type, value, tb)
+
+        # then start the debugger in post-mortem mode.
+        # pdb.pm() # deprecated
+        pdb.post_mortem(tb) # more modern
+
+sys.excepthook = info
+
+
 import time
 import random
 
@@ -32,7 +51,9 @@ assert user0.guid != corpus0.guid != doc0.guid != None
 for corpus in user0.corpora():
   assert corpus.guid == corpus0.guid
   assert corpus.parent == user0
-  for doc in corpus.docs():
+  docs = list(corpus.docs())
+  assert len(docs) == 3 
+  for doc in docs:
     assert doc.guid in (doc0.guid, doc1.guid, doc2.guid)
 
 

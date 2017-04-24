@@ -1,7 +1,11 @@
+# TODO
+# - rename guid to id
+
 import math
 import functools
 
-from datahog import node, entity, alias, name, prop, relationship
+from datahog import node, alias, name, prop, relationship
+import greenhouse
 
 import exceptions as exc
 import db
@@ -151,6 +155,7 @@ class ValueDict(Dict):
     super(ValueDict, self).__init__(*args, **kwargs)
     self.old_value = self.value
 
+
   def default_value(self):
     return ({
       int: 0,
@@ -194,7 +199,7 @@ class ValueDict(Dict):
     new_val = self._table.increment(db.pool, *args, **dhkw(kw))
     if new_val is None:
       raise exc.DoesNotExist(self)
-    self.value = new_val
+    self.value = new_val 
     return self
 
 # TODO unify save() methods
@@ -206,9 +211,8 @@ class ValueDict(Dict):
 
 
 class GuidDict(Dict):
-  _id_arg_strs = ('guid',)
-  _remove_arg_strs = ('guid',)
-  
+  _id_arg_strs = ('id',)
+  _remove_arg_strs = ('id',)
 
   def __init__(self, flags=None, dh=None):
     super(GuidDict, self).__init__(flags=flags, dh=dh)
@@ -224,7 +228,7 @@ class GuidDict(Dict):
 
   @property
   def guid(self):
-    return self._dh.get('guid', None)
+    return self._dh.get('id', None)
 
 
   # TODO 
@@ -257,8 +261,6 @@ class GuidDict(Dict):
     
 
 class PosDict(Dict):
-
-
   def shift(self, *args, **kw):
     args = [db.pool] + self._id_args + [self._ctx] + list(args)
     return self._table.shift(*args, **dhkw(kw))
@@ -277,7 +279,7 @@ class BaseIdDict(PosDict):
 
   @property
   def base_id(self):
-    return self._owner._dh['guid']
+    return self._owner._dh['id']
 
 
 class Relation(BaseIdDict):
@@ -375,18 +377,6 @@ class LookupDict(BaseIdDict, ValueDict):
     return entries[0]
 
 
-class Entity(GuidDict):
-  __metaclass__ = metaclasses.GuidMC
-  _table = entity
-
-
-  def __init__(self, dh=None, **kw):
-    super(Entity, self).__init__(
-      dh=dh or entity.create(
-        db.pool,
-        self._ctx, **dhkw(kw)))
-
-
 class Node(GuidDict, ValueDict, PosDict): 
   __metaclass__ = metaclasses.NodeMC
   _table = node
@@ -400,11 +390,15 @@ class Node(GuidDict, ValueDict, PosDict):
       if value is _missing:
         value = self.default_value()
       dh = node.create(db.pool, 
-                       parent.guid,
                        self._ctx,
                        value,
+                       base_id=self.parent_guid(),
                        **dhkw(kw))
     super(Node, self).__init__(dh=dh)
+
+
+  def parent_guid(self):
+    return self.parent and self.parent.guid or None
 
 
   def move(self, new_parent, **kw):
@@ -428,9 +422,10 @@ class Node(GuidDict, ValueDict, PosDict):
         raise exc.DoesNotExist(node)
       else:
         raise exc.WillNotUpdateStaleNode(node)
-
+    
     self.old_value = self.value
     return self
+
 
   class List(List):
     def _wrap_result(self, *args, **kw):
@@ -549,6 +544,28 @@ class Prop(ValueDict, BaseIdDict):
   def save(self, **kwargs):
     # TODO travis, any reason props don't support the _missing pattern in set?
     return prop.set(db.pool, self.base_id, self._ctx, self.value)
+
+
+class Lock(Prop):
+  schema = int 
+  
+  def acquire(self, timeout=10., retry_after=1.):
+    while not self.increment(limit=1):
+      greenhouse.scheduler.pause_for(retry_after)
+      timeout -= retry_after
+      if timeout <= 0:
+        raise exc.LockAcquisitionTimeout()
+
+  def release(self):
+    self(0)
+
+  def __enter__(self):
+    self.acquire()
+
+  def __exit__(self, exc_type, exc_val, tb):
+    if exc_val:
+      raise exc_val
+    self.release()
 
 
 dh_kwargs = ['timeout',

@@ -1,13 +1,14 @@
 import databacon as db
 import mummy
+import os
 
 
 db.connect({
   'shards': [{
     'shard': 0,
     'count': 4,
-    'host': '172.17.0.4',
-    'port': '5432', 
+    'host': os.environ['DATABACON_DB_1_PORT_5432_TCP_ADDR'],
+    'port': os.environ['DATABACON_DB_1_PORT_5432_TCP_PORT'],
     'user': 'legalease',
     'password': '',
     'database': 'legalease',
@@ -18,7 +19,7 @@ db.connect({
 })
 
 
-class User(db.Entity):
+class User(db.Node):
   flags = db.flags()
   flags.newsletter_sub = db.flag.bool(True)
   flags.role = db.flag.enum('admin', 'staff', 'user')
