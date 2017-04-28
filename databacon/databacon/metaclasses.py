@@ -26,7 +26,11 @@ def only_for_user_defined_subclasses(mc):
   creation databacon's concrete classes, and should not be applied. 
   
   Q: could this be eliminated by attaching a metaclass after databacon classes
-  are created?'''
+  are created?
+  TODO
+  A: indeed, by simply subclassing the classes in datahog_wrappers again in
+     __init__/fields and applying the metaclass there.
+'''
 
   do_not_apply_metaclass = [
     'Node', 'Prop', 'Alias', 'Name', 'Relation', 'LookupDict',
@@ -85,12 +89,11 @@ class RelationMC(DictMC):
 
   @classmethod
   def define_dh_ctx(mcls, cls):
-    ''' Runs once per accessor defined for a relationship. '''
+    ''' Runs once per accessor defined for a relationship (so, twice). '''
     if cls.base_cls and cls.rel_cls:
       cls._meta['base_ctx'] = cls.base_cls._ctx
       cls._meta['rel_ctx'] = cls.rel_cls._ctx
       super(RelationMC, mcls).define_dh_ctx(cls)
-
 
 class ValueDictMC(DictMC):
   to_storage = {
@@ -157,19 +160,21 @@ class GuidMC(DictMC):
     - assign a more meaningful class name 
     - assign a base_ctx + define a datahog context
     '''
-    
-    for attr, ctx_cls in attrs.iteritems():
-      
+    cls._datahog_attrs = []
+    for attr, base_id_cls in attrs.iteritems():
+
       # Ducktype subclasses of datahog_wrappers.{BaseIdDict, List}
       # that need datahog contexts, and skip the rest.
-      if not (hasattr(ctx_cls, '_ctx') or hasattr(ctx_cls, 'of_type')):
+      if not (hasattr(base_id_cls, '_ctx') or hasattr(base_id_cls, 'of_type')):
         continue
 
-      # Special case for List subclasses...
-      if hasattr(ctx_cls, 'of_type'):
-        list_cls, ctx_cls = ctx_cls, ctx_cls.of_type
+      cls._datahog_attrs.append(attr)
 
-        if ctx_cls:
+      # Special case for List subclasses...
+      if hasattr(base_id_cls, 'of_type'):
+        list_cls, base_id_cls = base_id_cls, base_id_cls.of_type
+
+        if base_id_cls:
           # ...that already have a concrete class on `of_type`, e.g.:
           #   `children = db.children(ChildCls)`
           #   `emails = db.alias(plural=True)`
@@ -182,41 +187,37 @@ class GuidMC(DictMC):
           #
           # ...so that we can give the List subclass a more meaningful name
 
-          list_cls.__name__ = '%s%s%s' % (attr.capitalize(), 
-                                          ctx_cls.__bases__[0].__name__,
+          list_cls.__name__ = '%s%s%s' % (attr, 
+                                          base_id_cls.__bases__[0].__name__,
                                           'List')
           list_cls.__module__ = cls.__module__
         else:
           lists_pending_cls\
             .setdefault(list_cls._pending_cls_name, [])\
             .append(list_cls)
-          ctx_cls = list_cls # sorry
+          base_id_cls = list_cls 
 
-      # Replace the field's temporary class name with something meaningful.
-      # E.g.:
-      #   'Relation-0' -> 'DocTermsRelation'
-      #   'Alias-0' -> 'UserUsernameAlias'
-      if 'rename' in ctx_cls.__name__:
-        ctx_cls.__name__ = '%s%s' % (attr.capitalize(),
-                                     ctx_cls.__name__.split('-')[0])
-        ctx_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
+      if 'rename' in base_id_cls.__name__:
+        base_id_cls.__name__ = '%s%s' % (attr,
+                                     base_id_cls.__name__.split('-')[0])
+        base_id_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
 
 
-      if has_ancestor_named(ctx_cls, 'BaseIdDict'):
+      if has_ancestor_named(base_id_cls, 'BaseIdDict'):
 
         # subclasses of relation might already have a context
-        if type(ctx_cls._ctx) is int:
+        if type(base_id_cls._ctx) is int:
           continue
 
-        ctx_cls.base_cls = cls
-        ctx_cls._meta['base_ctx'] = cls._ctx
+        base_id_cls.base_cls = cls
+        base_id_cls._meta['base_ctx'] = cls._ctx
 
-        ctx_cls.__metaclass__.define_dh_ctx(ctx_cls)
+        base_id_cls.__metaclass__.define_dh_ctx(base_id_cls)
         
         # setup class methods for looking up 
         # instances by name and alias
-        if has_ancestor_named(ctx_cls, 'LookupDict'):
-          setattr(cls, 'by_%s' % attr, ctx_cls.lookup)
+        if has_ancestor_named(base_id_cls, 'LookupDict'):
+          setattr(cls, 'by_%s' % attr, base_id_cls.lookup)
 
 
 @only_for_user_defined_subclasses

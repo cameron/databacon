@@ -71,15 +71,6 @@ class Dict(object):
     self._table.set_flags(*args, **dhkw(kw))
 
 
-  def json(self):
-    ''' Not the best name -- actually returns a jsonable dict (flags are a set,
-    which doesn't serialize to json).'''
-    json = self._dh.copy()
-    json['flags'] = list(json['flags'])
-    del json['ctx']
-    return json
-
-
 class List(object):
   __metaclass__ = metaclasses.ListMC
   default_page_size = 100
@@ -220,8 +211,7 @@ class GuidDict(Dict):
 
 
   def _instantiate_attr_classes(self):
-    attrs = [a for a in dir(self) if not a.startswith('_')]
-    for attr, val in [(a, getattr(self, a)) for a in attrs]:
+    for attr, val in [(a, getattr(self, a)) for a in self._datahog_attrs]:
       if isinstance(val, type) and issubclass(val, (Dict, List)):
         self.__dict__[attr] = val(owner=self)
 
@@ -318,7 +308,6 @@ class Relation(BaseIdDict):
 
   class List(List):
 
-
     def _wrap_result(self, result, nodes=False, **kw):
       if nodes:
         return (self.of_type(dh=result[0], owner=self._owner), 
@@ -349,17 +338,34 @@ class Relation(BaseIdDict):
       return super(Relation.List, self)._get_page(*args, **kw)
 
 
-    def add(self, db_instance, flags=None, **kw):
+
+
+    def get(self, other=None, guid=None, **kw):
+      return self.of_type(dh=relationship.get(
+        db.pool,
+        self.of_type._ctx,
+        self._owner.guid,
+        other and other.guid or guid, **dhkw(kw))) 
+
+
+    def add(self, other=None, guid=None, flags=None, **kw):
+      guid = other and other.guid or guid
       if self.of_type.forward:
-        base_id, rel_id = self._owner.guid, db_instance.guid
+        base_id, rel_id = self._owner.guid, guid
       else:
-        base_id, rel_id = db_instance.guid, self._owner.guid
+        base_id, rel_id = guid, self._owner.guid
+
+      # TODO wrap this in a of_type instance
       return relationship.create(db.pool, 
                                  self.of_type._ctx,
                                  base_id,
                                  rel_id,
                                  flags=flags and flags._flags_set or None,
                                  **dhkw(kw))
+
+    def remove(self, other=None, guid=None):
+      guid = other and other.guid or guid
+      # TODO
 
 
 class LookupDict(BaseIdDict, ValueDict):
@@ -567,6 +573,10 @@ class Lock(Prop):
       raise exc_val
     self.release()
 
+
+# TODO
+#class Singleton(Node):
+#  pass
 
 dh_kwargs = ['timeout',
              'forward_index',
