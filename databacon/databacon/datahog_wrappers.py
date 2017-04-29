@@ -310,8 +310,9 @@ class Relation(BaseIdDict):
 
     def _wrap_result(self, result, nodes=False, **kw):
       if nodes:
+        node_cls = getattr(self.of_type, self.of_type.forward and 'rel_cls' or 'base_cls')
         return (self.of_type(dh=result[0], owner=self._owner), 
-                self.of_type.base_cls(dh=result[1], owner=self._owner))
+                node_cls(dh=result[1], owner=self._owner))
       return self.of_type(dh=result, owner=self._owner)
 
 
