@@ -32,12 +32,12 @@ def prop(schema):
 
 
 def relation(target):
-  cls = None
+  relation_cls = None
   list_cls = dhw.Relation.List
 
   # brothers = db.relation(Brother.sisters)
   if inspect.isclass(target) and issubclass(target, dhw.Relation.List):
-    cls = subclass(target.of_type, forward=False, **target.of_type._meta)
+    cls = subclass(target.of_type, _meta=target.of_type._meta)
     list_cls = target
  
   # brothers = db.relation('Brother')
@@ -71,15 +71,6 @@ class lookup(object):
     functools.partial(_lookup, _kind=dhw.Name, _search_mode=search.PREFIX))
   phonetic = staticmethod(
     functools.partial(_lookup, _kind=dhw.Name, _search_mode=search.PHONETIC))
-
-
-def children(child_cls):
-  attrs = {}
-  if inspect.isclass(child_cls):
-    attrs['of_type'] = child_cls
-  elif isinstance(child_cls, str):
-    attrs['_pending_cls_name'] = child_cls
-  return subclass(dhw.Node.List, **attrs)
 
 
 def lock():

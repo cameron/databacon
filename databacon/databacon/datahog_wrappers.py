@@ -68,7 +68,8 @@ class Dict(object):
   
   def save_flags(self, add, clear, **kw):
     args = [db.pool] + self._id_args + [self._ctx, add, clear]
-    self._table.set_flags(*args, **dhkw(kw))
+    if not self._table.set_flags(*args, **dhkw(kw)):
+      raise Exception('flags not saved')
 
 
 class List(object):
@@ -91,13 +92,13 @@ class List(object):
   def __call__(self, **kw):
     kw.setdefault('start', 0)
     kw.setdefault('limit', self.default_page_size)
-    for page, offset in self._pages(**kw):
+    for edges, (page, offset) in self._pages(**kw):
       for result in page:
-        yield self._wrap_result(result, **dhkw(kw, blacklist=True))
+        yield self._wrap_result(result, edges=edges, **kw)
 
 
   def _wrap_result(self, result, **kw):
-    return self.of_type(dh=result, owner=self._owner, **kw)
+    return self.of_type(dh=result, owner=self._owner, **dhkw(kw))
 
 
   def _get_page(self, *args, **kw):
@@ -124,15 +125,6 @@ class List(object):
                      value,
                      flags=flags._flags_set,
                      **dhkw(kw))
-
-
-  def __getattr__(self, name):
-    ''' For node.children.by_child_alias lookups '''
-    if name.startswith('by_'):
-      lookup = getattr(self.of_type, name, None)
-      if lookup:
-        return functools.partial(lookup, scope_to_parent=self._owner)
-    raise AttributeError
 
 
 class ValueDict(Dict):
@@ -221,16 +213,6 @@ class GuidDict(Dict):
     return self._dh.get('id', None)
 
 
-  # TODO 
-  # merge with the child accessors / lists?
-  # def children(self, child_cls, **kw):
-  #   children, offset = node.get_children(db.pool,
-  #                                        self.guid,
-  #                                        child_cls._ctx,
-  #                                        **dhkw(kw))
-  #   return [child_cls(dh=n) for n in children]
-
-
   @classmethod
   def _by_guid(cls, ids, **kw):
     ids = type(ids) in (list, tuple) and ids or (ids,)
@@ -269,26 +251,23 @@ class BaseIdDict(PosDict):
 
   @property
   def base_id(self):
-    return self._owner._dh['id']
+    return self._dh['base_id']
 
 
 class Relation(BaseIdDict):
   __metaclass__ = metaclasses.RelationMC
   _id_arg_strs = ('base_id', 'rel_id')
   _table = relationship
-  _rel_cls_str = None
-  forward = True
   rel_cls = None
+
+  # databacon doesn't expose directed relations yet, but it's possible to do so
+  # by setting `forward = False` on a backwards-facing subclass of Relation.
+  forward = True 
 
 
   @property
   def rel_id(self):
     return self._dh['rel_id']
-
-
-  @property
-  def base_id(self):
-    return self._dh['base_id']
 
 
   def shift(self, index, **kw):
@@ -307,38 +286,57 @@ class Relation(BaseIdDict):
 
 
   class List(List):
+    def _wrap_result(self, result, edges=None, **kw):
+      edge, node = None, None
+      if not edges:
+        node = result
+      elif edges == 'only':
+        edge = result
+      elif edges:
+        edge, node = result
 
-    def _wrap_result(self, result, nodes=False, **kw):
-      if nodes:
+      if node:
         node_cls = getattr(self.of_type, self.of_type.forward and 'rel_cls' or 'base_cls')
-        return (self.of_type(dh=result[0], owner=self._owner), 
-                node_cls(dh=result[1], owner=self._owner))
-      return self.of_type(dh=result, owner=self._owner)
+        node = node_cls(dh=node, owner=self._owner)
+      if edge:
+        edge = self.of_type(dh=edge, owner=self._owner)
+
+      if edges and not edges == 'only':
+        return edge, node
+      return filter(lambda i: i, (edge, node))[0]
 
 
-    def _pages(self, nodes=False, **kw):
-      for page, offset in super(Relation.List, self)._pages(**kw):
-        if nodes:
-          if self.of_type.forward:
-            cls = self.of_type.rel_cls
-            id_key = 'rel_id'
-          else:
-            cls = self.of_type.base_cls
-            id_key = 'base_id'
-          ctx = cls._ctx
-          id_ctx_pairs = [(rel[id_key], ctx) for rel in page]
-          timeout = kw.get('timeout')
-          guid_dicts = cls._by_guid(id_ctx_pairs, timeout=timeout)
-          yield (zip(page, guid_dicts), offset)
+    def _pages(self, edges=None, **kw):
+      if edges not in (True, None, False, 'only'):
+        raise Exception('Invalid `over` value. Pass one of `True`, `False`, `None`, or \'only\'')
+
+      for edges_page, offset in super(Relation.List, self)._pages(**kw):
+        if edges == 'only':
+          yield edges, (edges_page, offset)
         else:
-          yield page, offset
+          nodes = self._nodes_for_page(edges_page, edges=edges, **kw)
+          if not edges:
+            yield edges, (nodes, offset)
+          else:
+            yield edges, (zip(edges_page, nodes), offset)
+
+
+    def _nodes_for_page(self, page, **kw):
+      if self.of_type.forward:
+        # TODO could/should probably fix this during field subclassing rather than here 
+        cls = type(self._owner) is self.of_type.base_cls and self.of_type.rel_cls or self.of_type.base_cls
+        id_key = 'rel_id'
+      else: # in theory this else is dead until directed relationships come back
+        cls = self.of_type.base_cls
+        id_key = 'base_id'
+      ctx = cls._ctx
+      id_ctx_pairs = [(rel[id_key], ctx) for rel in page]
+      return cls._by_guid(id_ctx_pairs, timeout=kw.get('timeout'))
 
 
     def _get_page(self, *args, **kw):
       kw['forward'] = self.of_type.forward
       return super(Relation.List, self)._get_page(*args, **kw)
-
-
 
 
     def get(self, other=None, guid=None, **kw):
@@ -432,18 +430,6 @@ class Node(GuidDict, ValueDict, PosDict):
     
     self.old_value = self.value
     return self
-
-
-  class List(List):
-    def _wrap_result(self, *args, **kw):
-      return super(Node.List, self)._wrap_result(*args, parent=self._owner, **kw)
-
-    def _get_page(self, *args, **kw):
-      return node.get_children(*args, **dhkw(kw))
-
-    @property
-    def flags(self):
-      raise AttributeError
 
 
 class Alias(LookupDict):

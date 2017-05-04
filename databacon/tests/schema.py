@@ -37,7 +37,7 @@ class User(db.Node):
   password = db.prop(str)
   password.flags.two_factor = db.flag.bool(False)
 
-  corpora = db.children('Corpus')
+  corpora = db.relation('Corpus')
 
 
 class Corpus(db.Node):

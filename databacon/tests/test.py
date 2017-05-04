@@ -194,7 +194,7 @@ doc0.terms.add(term, flags=term_flags)
 assert term.docs.add(doc0) == False
 
 # should be the same relationship
-assert term.docs[0].base_id == doc0.guid
+assert term.docs[0].rel_id == doc0.guid
 
 # increment() for int schemas
 # (the term's int represents a denormalized count of docs it occurs in)
@@ -230,14 +230,15 @@ assert e != None
 # the other docs relation
 term.special_docs.add(doc1)
 for rel in term.docs():
-  assert rel.base_id != doc1.guid
+  assert rel.rel_id != doc1.guid
 
 # make sure it the relation was added as expected
 assert term.special_docs[0].rel_id == doc1.guid
 
+
 ''' 
 TODO
-- test index manipulation for names/aliases/children/rels
+- test index manipulation for names/aliases/rels
   - index/forward_index/reverse_index in create/add calls
   - shift()
 - node.remove()

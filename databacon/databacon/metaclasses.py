@@ -93,6 +93,7 @@ class RelationMC(DictMC):
     if cls.base_cls and cls.rel_cls:
       cls._meta['base_ctx'] = cls.base_cls._ctx
       cls._meta['rel_ctx'] = cls.rel_cls._ctx
+      cls._meta['directed'] = False
       super(RelationMC, mcls).define_dh_ctx(cls)
 
 class ValueDictMC(DictMC):
@@ -127,7 +128,6 @@ class GuidMC(DictMC):
 
   def __new__(mcls, name, bases, attrs):
     cls = super(GuidMC, mcls).__new__(mcls, name, bases, attrs)
-
     mcls.define_dh_ctx(cls)
     mcls.resolve_pending_cls(cls)
     mcls.finalize_attr_classes(cls, attrs)
@@ -162,7 +162,6 @@ class GuidMC(DictMC):
     '''
     cls._datahog_attrs = []
     for attr, base_id_cls in attrs.iteritems():
-
       # Ducktype subclasses of datahog_wrappers.{BaseIdDict, List}
       # that need datahog contexts, and skip the rest.
       if not (hasattr(base_id_cls, '_ctx') or hasattr(base_id_cls, 'of_type')):
@@ -176,14 +175,10 @@ class GuidMC(DictMC):
 
         if base_id_cls:
           # ...that already have a concrete class on `of_type`, e.g.:
-          #   `children = db.children(ChildCls)`
           #   `emails = db.alias(plural=True)`
           #   `names = db.name(plural=True)`
           #   `thing1 = db.relationship('Cls')`
           #   `thing2 = db.relationship(Cls)`
-          #
-          # ...and avoiding those that don't, e.g.:
-          #   `children = db.children('ChildCls')`
           #
           # ...so that we can give the List subclass a more meaningful name
 
@@ -204,7 +199,6 @@ class GuidMC(DictMC):
 
 
       if has_ancestor_named(base_id_cls, 'BaseIdDict'):
-
         # subclasses of relation might already have a context
         if type(base_id_cls._ctx) is int:
           continue
