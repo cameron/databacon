@@ -7,3 +7,6 @@ def flatten(*args):
         yield sub
       else:
         yield el
+
+class Attrable(object):
+  pass

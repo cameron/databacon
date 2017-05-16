@@ -30,16 +30,22 @@ uniq = lambda s: '%s-%s-%s' % (s, time.time(), random.random())
 
 # Setup
 user0, user1 = User(), User()
-corpus0 = Corpus(parent=user0)
-corpus1 = Corpus(parent=user1)
+corpus0 = Corpus()
+corpus0.user.add(user0)
+corpus1 = Corpus()
+corpus1.user.add(user1)
 
-term = Term(parent=corpus0)
+term = Term()
+term.corpus.add(corpus0)
 word = uniq("word")
 term.string(word)
 
-doc0 = Doc({'path': '/path/to/original.file'}, parent=corpus0)
-doc1 = Doc({'path': '/to/file1'}, parent=corpus0)
-doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
+doc0 = Doc(value={'path': '/path/to/original.file'})
+doc0.corpus.add(corpus0)
+doc1 = Doc(value={'path': '/to/file1'})
+doc1.corpus.add(corpus0)
+doc2 = Doc(value={'path': '/to/file2'})
+doc2.corpus.add(corpus0)
 
 ###
 ### Nodes & Entities
@@ -47,23 +53,18 @@ doc2 = Doc({'path': '/to/file2'}, parent=corpus0)
 
 assert user0.guid != corpus0.guid != doc0.guid != None
 
-# Fetching Child Nodes
+# Fetching Related Nodes
 for corpus in user0.corpora():
   assert corpus.guid == corpus0.guid
-  assert corpus.parent == user0
+  assert list(corpus.user())[0].guid == user0.guid
   docs = list(corpus.docs())
   assert len(docs) == 3 
   for doc in docs:
     assert doc.guid in (doc0.guid, doc1.guid, doc2.guid)
 
 
-# Moving Child Nodes
-corpus0.move(user1)
-assert corpus0.parent.guid == user1.guid
-
-
 # Updating Node Values
-doc0({'path': 'one'})
+doc0(value={'path': 'one'})
 doc00 = Doc.by_guid(doc0.guid)
 assert doc0.value['path'] == doc00.value['path']
 doc00({'path': 'another'})
@@ -77,7 +78,7 @@ except Exception, e:
 assert e != None
 
 # Forcing an update should not fail
-doc0({'path': 'brute force'}, force=True)
+doc0(value={'path': 'brute force'}, force_overwrite=True)
 assert Doc.by_guid(doc0.guid).value == doc0.value
 
 
@@ -139,9 +140,9 @@ for email in user0.emails():
   assert email.value == address
   assert email.flags.verification_status == email_flags.verification_status
 
-# uniq_to_parent
-assert corpus0.terms.by_string(word).guid == term.guid
-assert corpus1.terms.by_string(word) == None
+# TODO uniq_to_rel accessor methods arent working yet
+#assert corpus0.terms.by_string(word).guid == term.guid
+#assert corpus1.terms.by_string(word) == None
 
 # Property
 pass_flags = User.password.flags(two_factor=True)
@@ -165,16 +166,16 @@ score0_flags = Doc.scores.flags(similarity=score0_int)
 assert doc0.scores.add(doc1, flags=score0_flags) == True
 
 # Generator of relation objects
-for rel in doc0.scores():
-  assert rel.flags.similarity == score0_int
-  assert rel.node().guid == doc1.guid
+for score, doc in doc0.scores(edges=True):
+  assert score.flags.similarity == score0_int
+  assert doc.guid == doc1.guid
 
 # Fetch nodes along with the relation
-for score, node in doc0.scores(nodes=True):
-  assert node.guid == score.node().guid
+for score, node in doc0.scores(edges=True):
+  assert node.guid == score.rel_id
 
 # Access single relations
-assert doc0.scores[0].flags.similarity == score0_int
+assert doc0.scores[0].rel_id == doc1.guid
 
 # Modify relation order
 # (Careful! O(N) db ops with number of displaced relations.)
@@ -196,20 +197,22 @@ assert term.docs.add(doc0) == False
 # should be the same relationship
 assert term.docs[0].rel_id == doc0.guid
 
+# TODO uniq_to_rel aliases
 # increment() for int schemas
 # (the term's int represents a denormalized count of docs it occurs in)
 term.increment()
-assert corpus0.terms.by_string(word).value == 1
+#assert corpus0.terms.by_string(word).value == 1
 
+# TODO ^^
 term.increment()
-assert corpus0.terms.by_string(word).value == 2
+#assert corpus0.terms.by_string(word).value == 2
 
 # Lookup incoming relationships
-for doc_term_rel in term.docs():
+for doc_term_rel in term.docs(edges='only'):
   assert doc_term_rel.flags.count == doc0_term_count
 
 # Lookup incoming relationships and nodes
-for doc_term_rel, doc in term.docs(nodes=True):
+for doc_term_rel, doc in term.docs(edges=True):
   assert doc.guid == doc0.guid
 
 
@@ -229,12 +232,18 @@ assert e != None
 # create a special doc relation and make sure it didn't bleed into
 # the other docs relation
 term.special_docs.add(doc1)
-for rel in term.docs():
+for rel in term.docs(edges='only'):
   assert rel.rel_id != doc1.guid
 
 # make sure it the relation was added as expected
 assert term.special_docs[0].rel_id == doc1.guid
 
+# relationship values
+value = {'some': 'thing'}
+print 'guid', term.docs[0].node().guid
+term.docs[0](value)
+assert value.items()[0] in term.docs[0].value.items()
+assert value.items()[0] in [edge.value.items() for edge in term.docs[0].node().terms(edges='only') if edge.rel_id == term.guid][0]
 
 ''' 
 TODO

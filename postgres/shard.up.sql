@@ -1,6 +1,8 @@
 
 --create extension if not exists fuzzystrmatch;
 
+-- TODO somehow travis's plans got screwed up -- hardcoding maxvalue here implies
+-- something about shardbits as configured in the datahog client
 create sequence node_ids maxvalue 18014398509481983 start with 1;
 
 
@@ -51,6 +53,7 @@ create unique index alias_lookup_uniq on alias_lookup (
 
 -- RELATIONSHIPS --
 
+-- TODO rename: relationship -> edge, edge -> branch
 create table relationship (
   base_id bigint not null,
   flags smallint default 0 not null,
@@ -58,7 +61,8 @@ create table relationship (
   rel_id bigint not null,
   ctx smallint not null,
   pos int not null,
-  forward bool not null
+  forward bool not null,
+  value bytea default null
 );
 
 create unique index relationship_uniq_forward on relationship (
@@ -94,6 +98,7 @@ create unique index node_id on node (
   id
 ) where time_removed is null;
 
+-- TODO edge -> branch
 create table edge (
   base_id bigint not null,
   time_removed timestamp default null,

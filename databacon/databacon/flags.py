@@ -1,7 +1,9 @@
 import math
 
 from datahog.const import flag as dh_flag
+from lang import Attrable
 import db
+
 
 class Field(object):
 
@@ -92,6 +94,7 @@ class Layout(object):
 
 
   def __setattr__(self, name, val):
+#    if name == 'similarity': import pdb; pdb.set_trace()
     if not isinstance(val, Field):
       return super(Layout, self).__setattr__(name, val)
     self.set_flag_field(name, val)
@@ -129,6 +132,11 @@ class Layout(object):
 
 
   def __call__(self, **fields):
+    ''' Useful in the case that you want to create a single flags instance that 
+    can be passed to many node instances. E.g.,
+    verification_email_flags = User.verification_email.flags(
+      status=User.verification_email.flags.status.sent)
+    '''
     flags = Flags(fields=self.fields)
     for field_name, field_val in fields.iteritems():
       setattr(flags, field_name, field_val)
@@ -137,12 +145,17 @@ class Layout(object):
 
 
 class Flags(object):
+  ''' Instances of this class appear at the `flags` attr of nodes, properties, 
+  relations, etc. '''
 
   def __init__(self, owner=None, fields=None):
     self._owner = owner # TODO weakref
-    self._dirty_flags = set()
-    self._tmp_set = set()
-    self._fields = owner and owner.__class__.flags.fields or fields
+    self._dirty_mask = set() # set of all flag values that need to be saved
+    if not fields:
+      fields = owner and owner.__class__.flags.fields
+    self._fields = fields
+    if not self._owner:
+      self._tmp_set = set()    
 
 
   def __setattr__(self, name, value):
@@ -155,30 +168,37 @@ class Flags(object):
     return super(Flags, self).__setattr__(name, value)
 
 
+  # goal: simplify flag storage
+
+  # - get rid of the need for tmp_set by instantiate a default value
+  #   for flags (and value?) when Dict is instantiated
+  
   @property
   def _flags_set(self):
-    if self._owner and self._owner._dh and self._owner._dh.get('flags'):
+    if self._owner:
       return self._owner._dh['flags']
     return self._tmp_set
 
 
   def __getattr__(self, name):
-    if name in self._fields:
+    if self._fields and name in self._fields:
       field = self._fields[name]
       return field.value_from_flags(self._flags_set.intersection(field.flags))
     raise AttributeError
 
 
   def _set_field(self, name, value):
+    ''' Handles, e.g., user.verification_email.flags.status = 'sent' '''
     field = self._fields[name]
     flags, dirty = field.flags_from_value(value)
 
     self._flags_set.difference_update(dirty)
-    self._dirty_flags.update(dirty)
+    self._dirty_mask.update(dirty)
     self._flags_set.update(flags)
 
 
   def __call__(self, name, value=None, **kwargs):
+    # TODO better api: flag_name/value in kwargs
     if value:
       self._set_field(name, value)
       self.save(**kwargs)
@@ -186,9 +206,9 @@ class Flags(object):
       return getattr(self, name)
 
 
-  def _add_clear_flags(self):
+  def _get_add_clear_flags(self):
     add, clear = [], []
-    for flag in self._dirty_flags:
+    for flag in self._dirty_mask:
       if flag in self._flags_set:
         add.append(flag)
       else:
@@ -197,9 +217,7 @@ class Flags(object):
 
 
   def save(self, **kwargs):
-    self._owner.save_flags(*self._add_clear_flags())
-    self._dirty_flags = set()
+    self._owner.save_flags(*self._get_add_clear_flags())
+    self._dirty_mask = set()
       
 
-class Attrable(object):
-  pass

@@ -1,6 +1,3 @@
-# TODO
-# - rename guid to id
-
 import math
 import functools
 
@@ -35,17 +32,10 @@ class Dict(object):
 
   def __init__(self, flags=None, dh=None):
     self._dh = dh or {}
-    self.flags = flags or Flags(self)
-    self.__ctx = None
+    self._dh.setdefault('flags', set())
+    self.flags = flags or Flags(owner=self)
+
         
-  @property
-  def _ctx(self):
-    return self.__ctx
-
-  @_ctx.setter
-  def _ctx(self, ctx):
-    self.__ctx = ctx
-
   @property
   def _id_args(self):
     return [self._dh[key] for key in self._id_arg_strs]
@@ -57,7 +47,8 @@ class Dict(object):
 
 
   def remove(self, **kw):
-    args = self._ids_args + [self._ctx] + self._remove_args
+    # TODO test
+    args = self._id_args + [self._ctx] + self._remove_args
     return self._table.remove(db.pool, *args, **dhkw(kw))
 
   
@@ -68,7 +59,8 @@ class Dict(object):
   
   def save_flags(self, add, clear, **kw):
     args = [db.pool] + self._id_args + [self._ctx, add, clear]
-    if not self._table.set_flags(*args, **dhkw(kw)):
+    res = self._table.set_flags(*args, **dhkw(kw))
+    if res is None:
       raise Exception('flags not saved')
 
 
@@ -86,19 +78,20 @@ class List(object):
   def __getitem__(self, idx):
     return self._wrap_result(
       self._get_page(
-        db.pool, self._owner.guid, self.of_type._ctx, start=idx, limit=1)[0][0])
+        db.pool, self._owner.guid, self.of_type._ctx, start=idx, limit=1)[0][0], edges='only')
 
 
   def __call__(self, **kw):
+    # TODO test multipage results (there was a bug that cause infinite looping)
     kw.setdefault('start', 0)
     kw.setdefault('limit', self.default_page_size)
-    for edges, (page, offset) in self._pages(**kw):
+    for page, offset in self._pages(**kw):
       for result in page:
-        yield self._wrap_result(result, edges=edges, **kw)
+        yield self._wrap_result(result, edges=kw.get('edges', None))
+ 
 
-
-  def _wrap_result(self, result, **kw):
-    return self.of_type(dh=result, owner=self._owner, **dhkw(kw))
+  def _wrap_result(self, result, edges=None):
+    return self.of_type(dh=result, owner=self._owner)
 
 
   def _get_page(self, *args, **kw):
@@ -107,12 +100,11 @@ class List(object):
 
   def _pages(self, **kw):
     results = [None]
-    offset = 0
-    while offset % kw['limit'] == 0 and len(results):
-      results, offset = self._get_page(
+    while len(results):
+      results, kw['start'] = self._get_page(
         db.pool, self._owner.guid, self.of_type._ctx, **kw)
       if len(results):
-        yield results, offset
+        yield results, kw['start']
       else:
         raise StopIteration
     raise StopIteration
@@ -135,6 +127,7 @@ class ValueDict(Dict):
 
 
   def __init__(self, *args, **kwargs):
+    kwargs.setdefault('dh', {}).setdefault('value', self.default_value())
     super(ValueDict, self).__init__(*args, **kwargs)
     self.old_value = self.value
 
@@ -145,6 +138,8 @@ class ValueDict(Dict):
       str: '',
       unicode: u'',
       type(None): None,
+      dict: {},
+      list: []
     }).get(type(self.schema) is type and self.schema or type(self.schema), None)
     
 
@@ -158,21 +153,21 @@ class ValueDict(Dict):
     self._dh['value'] = value
 
 
-  def __call__(self, value=_missing, flags=None, force=False, **kwargs):
-    if value is _missing:
-      self._dh = self._get(**kwargs)
+  def __call__(self, value=_missing, flags=None, force_overwrite=False, **kwargs):
+    if value is _missing and getattr(self, 'base_id', self._owner.guid): 
+      self._get(**kwargs)
       return self
 
-    self.value = value
-    self.save(force=force)
+    self.value = value is _missing and self.default_value() or value
+    self.save(force_overwrite=force_overwrite)
     
     if flags:
       self.flags = flags
-      # TODO this feels WET 
       self._dh['flags'] = flags._tmp_set
       self.flags._owner = self
       self.flags.save()
     return self
+
 
   def increment(self, **kw):
     if not self.schema is int:
@@ -185,23 +180,19 @@ class ValueDict(Dict):
     self.value = new_val 
     return self
 
-# TODO unify save() methods
-#  - and .save() flags
-#  - list of save method names
-#   - node: update
-#   - alias/name: none (must remove/create a new one)
-#   - prop: set
-
 
 class GuidDict(Dict):
   _id_arg_strs = ('id',)
   _remove_arg_strs = ('id',)
 
-  def __init__(self, flags=None, dh=None):
-    super(GuidDict, self).__init__(flags=flags, dh=dh)
+  def __init__(self, *args, **kwargs):
+    super(GuidDict, self).__init__(flags=kwargs.get('flags', None), dh=kwargs.get('dh', None))
     self._instantiate_attr_classes()
 
 
+  # if this gets to be a performance problem...
+  # - look into slots
+  # - or possibly just make it lazy via getattr
   def _instantiate_attr_classes(self):
     for attr, val in [(a, getattr(self, a)) for a in self._datahog_attrs]:
       if isinstance(val, type) and issubclass(val, (Dict, List)):
@@ -221,7 +212,7 @@ class GuidDict(Dict):
     return cls._table.batch_get(db.pool, 
                                 ids,
                                 **dhkw(kw))
-    
+
 
   @classmethod
   def by_guid(cls, ids, **kw):
@@ -245,18 +236,20 @@ class BaseIdDict(PosDict):
 
   def __init__(self, owner=None, dh=None):
     self._owner = owner
-    dh = dh or {'base_id': owner.guid}
+    dh = dh or {}
+    dh.setdefault('base_id', getattr(owner, 'guid', None))
     super(BaseIdDict, self).__init__(dh=dh)
 
 
   @property
   def base_id(self):
-    return self._dh['base_id']
+    return self._dh.get('base_id', None)
 
 
-class Relation(BaseIdDict):
+class Relation(BaseIdDict, ValueDict):
   __metaclass__ = metaclasses.RelationMC
   _id_arg_strs = ('base_id', 'rel_id')
+  _remove_arg_strs = tuple()
   _table = relationship
   rel_cls = None
 
@@ -274,19 +267,22 @@ class Relation(BaseIdDict):
     super(Relation, self).shift(self.forward, index, **kw)
 
 
-  def node(self, **kw):
-    if self.forward:
-      guid, cls = self.rel_id, self.rel_cls
-    else:
-      guid, cls = self.base_id, self.base_cls
-    return cls(dh=cls._table.get(
-      db.pool, 
-      guid,
-      cls._ctx, **dhkw(kw)))
+  def save(self, force_overwrite=None, **kw):
+    # TODO old_value=_missing support for set (like node.update)
+    # TODO force_overwrite
+    return relationship.update(db.pool, self.base_id, self.rel_id, self._ctx, self.value, **kw)
 
+
+  def node(self, which='base', **kw):
+    # grossness related to undirected relationships
+    other_cls = 'base' if getattr(self, 'undirected_subclass', False) else 'rel'
+    other_id = 'rel' if getattr(self, 'undirected_subclass', False) else 'base'
+    cls = getattr(self, '%s_cls' % other_cls)
+    id = getattr(self, '%s_id' % other_id)
+    return cls.by_guid(id)
 
   class List(List):
-    def _wrap_result(self, result, edges=None, **kw):
+    def _wrap_result(self, result, edges=None):
       edge, node = None, None
       if not edges:
         node = result
@@ -296,13 +292,14 @@ class Relation(BaseIdDict):
         edge, node = result
 
       if node:
-        node_cls = getattr(self.of_type, self.of_type.forward and 'rel_cls' or 'base_cls')
+        node_cls = self._node_cls()
         node = node_cls(dh=node, owner=self._owner)
       if edge:
         edge = self.of_type(dh=edge, owner=self._owner)
 
       if edges and not edges == 'only':
         return edge, node
+
       return filter(lambda i: i, (edge, node))[0]
 
 
@@ -312,19 +309,27 @@ class Relation(BaseIdDict):
 
       for edges_page, offset in super(Relation.List, self)._pages(**kw):
         if edges == 'only':
-          yield edges, (edges_page, offset)
+          yield edges_page, offset
         else:
           nodes = self._nodes_for_page(edges_page, edges=edges, **kw)
+          
           if not edges:
-            yield edges, (nodes, offset)
+            yield nodes, offset
           else:
-            yield edges, (zip(edges_page, nodes), offset)
+            yield zip(edges_page, nodes), offset
+
+
+    def _node_cls(self):
+      ''' TODO This particular inelegance is related the the undirected
+      relationships mess.'''
+      return type(self._owner) is self.of_type.base_cls and \
+        self.of_type.rel_cls or self.of_type.base_cls
 
 
     def _nodes_for_page(self, page, **kw):
       if self.of_type.forward:
         # TODO could/should probably fix this during field subclassing rather than here 
-        cls = type(self._owner) is self.of_type.base_cls and self.of_type.rel_cls or self.of_type.base_cls
+        cls = self._node_cls()
         id_key = 'rel_id'
       else: # in theory this else is dead until directed relationships come back
         cls = self.of_type.base_cls
@@ -340,48 +345,54 @@ class Relation(BaseIdDict):
 
 
     def get(self, other=None, guid=None, **kw):
-      return self.of_type(dh=relationship.get(
+      dh = relationship.get(
         db.pool,
         self.of_type._ctx,
         self._owner.guid,
-        other and other.guid or guid, **dhkw(kw))) 
+        other and other.guid or guid, **dhkw(kw))
+      return dh and self.of_type(dh=dh) or None
 
 
-    def add(self, other=None, guid=None, flags=None, **kw):
+    def add(self, other=None, guid=None, value=None, flags=None, **kw):
       guid = other and other.guid or guid
+      if not guid:
+        raise Exception('nothing to add')
+
       if self.of_type.forward:
         base_id, rel_id = self._owner.guid, guid
       else:
         base_id, rel_id = guid, self._owner.guid
 
-      # TODO wrap this in a of_type instance
       return relationship.create(db.pool, 
                                  self.of_type._ctx,
                                  base_id,
                                  rel_id,
+                                 value=value,
+                                 # TODO where is forward in this mess?
                                  flags=flags and flags._flags_set or None,
                                  **dhkw(kw))
 
     def remove(self, other=None, guid=None):
       guid = other and other.guid or guid
-      # TODO
+      return relationship.remove(db.pool,
+                                 self._owner.guid,
+                                 guid,
+                                 self.of_type._ctx)
 
 
 class LookupDict(BaseIdDict, ValueDict):
   _remove_arg_strs = ('value',)
 
-  # is this schema appropriate? don't see schema in travis's test_name
-  # possible that it's part of the user-facing API?
-  # schema = str
-
   def _get(self, **kw):
     entries = self._table.list(db.pool, self.base_id, self._ctx, **dhkw(kw))[0]
     if not entries:
-      return {'base_id': self.base_id}
+      self._dh = {'base_id': self.base_id}
+      return
     self._fetched_value = entries[0]['value'] # for remove during save
-    return entries[0]
+    self._dh = entries[0]
 
 
+# TODO merge GuidDict and Node
 class Node(GuidDict, ValueDict, PosDict): 
   __metaclass__ = metaclasses.NodeMC
   _table = node
@@ -389,21 +400,22 @@ class Node(GuidDict, ValueDict, PosDict):
   parent = None 
 
 
-  def __init__(self, value=_missing, parent=None, dh=None, **kw):
-    self.parent = parent
+  def __init__(self, *args, **kw):
+    self.parent = kw.get('parent', None)
+    had_dh = dh = kw.get('dh', None)
     if not dh:
-      if value is _missing:
-        value = self.default_value()
       dh = node.create(db.pool, 
                        self._ctx,
-                       value,
-                       base_id=self.parent_guid(),
+                       kw.get('value', self.default_value()),
+                       base_id=getattr(self.parent,'guid', None),
                        **dhkw(kw))
     super(Node, self).__init__(dh=dh)
+    if not had_dh and hasattr(self, 'new'):
+      self.new(*args, **kw)
 
 
   def parent_guid(self):
-    return self.parent and self.parent.guid or None
+    return 
 
 
   def move(self, new_parent, **kw):
@@ -414,8 +426,8 @@ class Node(GuidDict, ValueDict, PosDict):
     return moved
 
 
-  def save(self, force=False, **kw):
-    old_value = force and _missing or self.old_value
+  def save(self, force_overwrite=False, **kw):
+    old_value = force_overwrite and _missing or self.old_value
     result = node.update(db.pool,
                          self.guid,
                          self._ctx,
@@ -423,7 +435,7 @@ class Node(GuidDict, ValueDict, PosDict):
                          old_value=old_value,
                          **dhkw(kw))
     if not result:
-      if force:
+      if force_overwrite:
         raise exc.DoesNotExist(node)
       else:
         raise exc.WillNotUpdateStaleNode(node)
@@ -435,34 +447,40 @@ class Node(GuidDict, ValueDict, PosDict):
 class Alias(LookupDict):
   _table = alias
   _fetched_value = None
-  uniq_to_parent = None
+  uniq_to_rel = None
+
+
+  @property
+  def uniq_to(self):
+    return list(getattr(self._owner, self.uniq_to_rel)())[0]
 
 
   def __call__(self, value=_missing, **kwargs):
-    if value is not _missing and self.uniq_to_parent:
-      value = guid_prefix(self._owner.parent, value)
+    if value is not _missing and self.uniq_to_rel:
+      value = guid_prefix(self.uniq_to, value)
     return super(Alias, self).__call__(value=value, **kwargs)
 
 
   @property
   def value(self):
     val = LookupDict.value.fget(self)
-    if val and self.uniq_to_parent:
-      return val.replace('%s:' % self._owner.parent.guid, '')
+    if val and self.uniq_to_rel:
+      return val.replace('%s:' % self.uniq_to.guid, '')
     return val
 
   @value.setter
   def value(self, value):
-    if self.uniq_to_parent:
-      if not value.startswith('%s:' % self._owner.parent.guid):
-        value = guid_prefix(self._owner.parent, value)
+    if self.uniq_to_rel:
+      if not value.startswith('%s:' % self.uniq_to.guid):
+        value = guid_prefix(self.uniq_to, value)
     self._dh['value'] = value
     LookupDict.value.fset(self, value)
 
 
   class List(List):
     def _add(self, *args, **kwargs):
-      if self.of_type.uniq_to_parent:
+      if self.of_type.uniq_to_rel:
+        # TODO wat is this
         args[3] = self._uniq_to_parent_val(args[3])
       return alias.set(*args, **kwargs)
 
@@ -475,6 +493,7 @@ class Alias(LookupDict):
     alias.set(db.pool, self.base_id, self._ctx, self._dh['value'], **dhkw(kw))
 
 
+  # TODO deal with scope_to_parent
   @classmethod
   def lookup(cls, value, scope_to_parent=None, **kw):
     if scope_to_parent:
@@ -516,8 +535,14 @@ class Prop(ValueDict, BaseIdDict):
 
 
   def _get(self, **kw):
-    return prop.get(db.pool, self.base_id, self._ctx, **dhkw(kw))
+    dh = prop.get(db.pool, self.base_id, self._ctx, **dhkw(kw))
+    if dh:
+      self._dh = dh
 
+
+  @property
+  def base_id(self):
+    return super(Prop, self).base_id or self._owner.guid
 
   @property
   def _remove_args(self):
@@ -535,7 +560,7 @@ class Prop(ValueDict, BaseIdDict):
 
 
   def save(self, **kwargs):
-    # TODO travis, any reason props don't support the _missing pattern in set?
+    # TODO old_value=_missing support for set (like node.update)
     return prop.set(db.pool, self.base_id, self._ctx, self.value)
 
 
@@ -560,10 +585,6 @@ class Lock(Prop):
       raise exc_val
     self.release()
 
-
-# TODO
-#class Singleton(Node):
-#  pass
 
 dh_kwargs = ['timeout',
              'forward_index',

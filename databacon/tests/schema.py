@@ -41,19 +41,19 @@ class User(db.Node):
 
 
 class Corpus(db.Node):
-  parent = User
+  user = db.relation(User.corpora)
 
-  docs = db.children('Doc')
+  docs = db.relation('Doc')
 
   # TODO if this accessor is not defined, and the terms.string field
   # is a db.lookup.alias(uniq_to_parent=True), it's impossible to
   # lookup terms by their string aliases. Either throw an error if the
   # accessor is missing, or automatically generate an accessor.
-  terms = db.children('Term')
+  terms = db.relation('Term')
 
 
 class Doc(db.Node):
-  parent = Corpus
+  corpus = db.relation(Corpus.docs)
 
   flags = db.flags()
   flags.length = db.flag.int(bits=16)
@@ -73,11 +73,11 @@ class Doc(db.Node):
 
 
 class Term(db.Node):
-  parent = Corpus
+  corpus = db.relation(Corpus.terms)
 
   schema = int # number of docs in the corpus that include this term
 
-  string = db.lookup.alias(uniq_to_parent=True)
+  string = db.lookup.alias(uniq_to_rel='corpus')
 
   # define an accessor for the already-declared relationship Doc.terms
   docs = db.relation(Doc.terms)

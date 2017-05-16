@@ -15,14 +15,7 @@ import datahog_wrappers as dhw
 import flags
 
 
-__all__ = ['prop', 'relation', 'lookup', 'children']
-
-
-subcls_id_ctr = 0
-def subclass(base, **attrs):
-  global subcls_id_ctr
-  subcls_id_ctr += 1
-  return type('%s-rename-%s' % (base.__name__, subcls_id_ctr), (base,), attrs)
+__all__ = ['prop', 'relation', 'lookup', 'children', 'lock']
 
 
 def prop(schema):
@@ -32,12 +25,11 @@ def prop(schema):
 
 
 def relation(target):
-  relation_cls = None
   list_cls = dhw.Relation.List
 
   # brothers = db.relation(Brother.sisters)
   if inspect.isclass(target) and issubclass(target, dhw.Relation.List):
-    cls = subclass(target.of_type, _meta=target.of_type._meta)
+    cls = subclass(target.of_type, _meta=target.of_type._meta, undirected_subclass=True)
     list_cls = target
  
   # brothers = db.relation('Brother')
@@ -53,11 +45,11 @@ def relation(target):
   return cls
 
 
-def _lookup(plural=False, _kind=None, _search_mode=None, loose=None, uniq_to_parent=False):
+def _lookup(plural=False, _kind=None, _search_mode=None, loose=None, uniq_to_rel=None):
   meta = {'search': _search_mode, 'phonetic_loose': loose}
   attrs = {'_meta': meta}
-  if _kind == dhw.Alias and uniq_to_parent:
-    attrs['uniq_to_parent'] = True
+  if _kind == dhw.Alias and uniq_to_rel:
+    attrs['uniq_to_rel'] = uniq_to_rel
   cls = subclass(_kind, **attrs)
   if plural:
     cls = subclass(cls.List, of_type=cls)
@@ -75,3 +67,12 @@ class lookup(object):
 
 def lock():
   return subclass(dhw.Lock)
+
+
+subcls_id_ctr = 0
+def subclass(base, **attrs):
+  global subcls_id_ctr
+  subcls_id_ctr += 1
+  return type('%s-rename-%s' % (base.__name__, subcls_id_ctr), (base,), attrs)
+
+

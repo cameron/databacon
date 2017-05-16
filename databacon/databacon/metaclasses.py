@@ -12,34 +12,21 @@ import datahog as dh
 import exceptions as exc
 
 
-
 def only_for_user_defined_subclasses(mc):
-  '''
-  # WHAT
-  This metaclass decorator uses a blacklist of databacon's concrete classes
-  to bypass the __new__ method that the metaclasses rely on to do their work.
+  ''' This metaclass decorator prevents the decorated metaclass from operating 
+  on the creation of databacon's concrete classes (Node, Relationship, etc).
 
-  # WHY
-  The purpose of the metaclasses defined herein is to manage construction of
-  user-defined subclasses of concrete databacon classes such as Node,
-  Alias, et al. As such, the metaclass operations are inappropriate during the
-  creation databacon's concrete classes, and should not be applied. 
-  
-  Q: could this be eliminated by attaching a metaclass after databacon classes
-  are created?
-  TODO
-  A: indeed, by simply subclassing the classes in datahog_wrappers again in
-     __init__/fields and applying the metaclass there.
-'''
+  The metaclasses herein shepherd the creation of user-defined subclasses and
+  are not appropriate for databacon's classes. '''
 
-  do_not_apply_metaclass = [
-    'Node', 'Prop', 'Alias', 'Name', 'Relation', 'LookupDict',
+  do_not_apply_metaclass_to = [
+    'Node', 'Prop', 'Alias', 'Name', 'Relation', 'LookupDict', 'Lock',
     'ValueDict', 'PosDict', 'BaseIdDict', 'GuidDict', 'Dict', 'List'
   ]
 
   old__new__ = mc.__new__
   def new__new__(mcls, name, bases, attrs):
-    if name in do_not_apply_metaclass:
+    if name in do_not_apply_metaclass_to:
       return super(mc, mcls).__new__(mcls, name, bases, attrs)
     return old__new__(mcls, name, bases, attrs)
   mc.__new__ = staticmethod(new__new__)
@@ -49,7 +36,7 @@ def only_for_user_defined_subclasses(mc):
 @only_for_user_defined_subclasses
 class DictMC(type):
   user_cls_by_name = {}
-
+  ctx_counter = 0
   to_const = {
     dh.node: dh.table.NODE,
     dh.alias: dh.table.ALIAS,
@@ -63,15 +50,14 @@ class DictMC(type):
     attrs.setdefault('_meta', {})
     cls = super(DictMC, mcls).__new__(mcls, name, bases, attrs)
 
-    # allow flag inheritance
+    # allow flag layout inheritance
     if not hasattr(cls, 'flags'):
-      setattr(cls, 'flags', flags.Layout())
+      setattr(cls, 'flags', type('%s_flags' % cls.__name__, (flags.Layout,), {})())
 
     DictMC.user_cls_by_name[name] = cls
     return cls
 
 
-  ctx_counter = 0
   @classmethod
   def define_dh_ctx(mcls, cls):
     DictMC.ctx_counter += 1
@@ -80,21 +66,6 @@ class DictMC(type):
     setattr(cls, '_ctx', DictMC.ctx_counter)
     cls.flags.freeze(cls._ctx)
 
-
-rels_pending_cls = {}
-lists_pending_cls = {}
-
-@only_for_user_defined_subclasses
-class RelationMC(DictMC):
-
-  @classmethod
-  def define_dh_ctx(mcls, cls):
-    ''' Runs once per accessor defined for a relationship (so, twice). '''
-    if cls.base_cls and cls.rel_cls:
-      cls._meta['base_ctx'] = cls.base_cls._ctx
-      cls._meta['rel_ctx'] = cls.rel_cls._ctx
-      cls._meta['directed'] = False
-      super(RelationMC, mcls).define_dh_ctx(cls)
 
 class ValueDictMC(DictMC):
   to_storage = {
@@ -122,16 +93,34 @@ class ValueDictMC(DictMC):
     super(ValueDictMC, mcls).define_dh_ctx(cls)
 
 
+rels_pending_cls = {}
+lists_pending_cls = {}
+
+
+@only_for_user_defined_subclasses
+class RelationMC(ValueDictMC):
+
+  @classmethod
+  def define_dh_ctx(mcls, cls):
+    ''' Runs once per accessor defined for a relationship (so, twice). '''
+    if cls.base_cls and cls.rel_cls:
+      cls._meta['base_ctx'] = cls.base_cls._ctx
+      cls._meta['rel_ctx'] = cls.rel_cls._ctx
+      cls._meta['directed'] = False
+      super(RelationMC, mcls).define_dh_ctx(cls)
+      # this coming after super is important :(
+      cls._meta['storage'] = dh.storage.SERIAL
+
+
 @only_for_user_defined_subclasses
 class GuidMC(DictMC):
-
-
+  
   def __new__(mcls, name, bases, attrs):
     cls = super(GuidMC, mcls).__new__(mcls, name, bases, attrs)
     mcls.define_dh_ctx(cls)
     mcls.resolve_pending_cls(cls)
     mcls.finalize_attr_classes(cls, attrs)
-
+    
     if hasattr(cls, 'flags'):
       cls.flags.freeze(cls._ctx)
 
@@ -162,6 +151,7 @@ class GuidMC(DictMC):
     '''
     cls._datahog_attrs = []
     for attr, base_id_cls in attrs.iteritems():
+
       # Ducktype subclasses of datahog_wrappers.{BaseIdDict, List}
       # that need datahog contexts, and skip the rest.
       if not (hasattr(base_id_cls, '_ctx') or hasattr(base_id_cls, 'of_type')):
@@ -193,8 +183,8 @@ class GuidMC(DictMC):
           base_id_cls = list_cls 
 
       if 'rename' in base_id_cls.__name__:
-        base_id_cls.__name__ = '%s%s' % (attr,
-                                     base_id_cls.__name__.split('-')[0])
+        base_id_cls.__name__ = '%s_%s' % (attr,
+                                          base_id_cls.__name__.split('-')[0].lower())
         base_id_cls.__module__ = '%s.%s' % (cls.__module__, cls.__name__)
 
 
@@ -233,9 +223,9 @@ class ListMC(type):
 
 def has_ancestor_named(classes, names):
   ''' String named-based impl of issubclass to circumvent circular import woes 
-  in NodeDictMC, which previously wanted to refer to the Entity class. 
-  In a growing codebase where classes share the same name (but different module
-  paths), this might cause some serious head scratching...'''
+  in NodeDictMC. In a growing codebase where classes share the same name
+  (but different module paths), this might cause some serious head 
+  scratching...'''
   bases = list(isinstance(classes, type) and classes.__bases__ or classes)
   names = type(names) is tuple and names or (names,)
   while bases:
