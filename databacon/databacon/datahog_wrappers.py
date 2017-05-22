@@ -129,8 +129,12 @@ class ValueDict(Dict):
   def __init__(self, *args, **kwargs):
     kwargs.setdefault('dh', {}).setdefault('value', self.default_value())
     super(ValueDict, self).__init__(*args, **kwargs)
-    self.old_value = self.value
-
+    if type(self.value) is dict:
+      self.old_value = self.value.copy()
+    elif type(self.value) is list:
+      self.old_value = list(self.value)
+    else:
+      self.old_value = self.value
 
   def default_value(self):
     return ({
@@ -153,19 +157,16 @@ class ValueDict(Dict):
     self._dh['value'] = value
 
 
-  def __call__(self, value=_missing, flags=None, force_overwrite=False, **kwargs):
+  def __call__(self, value=_missing, force_overwrite=False, lazy=True, **kwargs):
     if value is _missing and getattr(self, 'base_id', self._owner.guid): 
+      if lazy and self.value:
+        return self
       self._get(**kwargs)
       return self
 
     self.value = value is _missing and self.default_value() or value
     self.save(force_overwrite=force_overwrite)
     
-    if flags:
-      self.flags = flags
-      self._dh['flags'] = flags._tmp_set
-      self.flags._owner = self
-      self.flags.save()
     return self
 
 
@@ -380,18 +381,6 @@ class Relation(BaseIdDict, ValueDict):
                                  self.of_type._ctx)
 
 
-class LookupDict(BaseIdDict, ValueDict):
-  _remove_arg_strs = ('value',)
-
-  def _get(self, **kw):
-    entries = self._table.list(db.pool, self.base_id, self._ctx, **dhkw(kw))[0]
-    if not entries:
-      self._dh = {'base_id': self.base_id}
-      return
-    self._fetched_value = entries[0]['value'] # for remove during save
-    self._dh = entries[0]
-
-
 # TODO merge GuidDict and Node
 class Node(GuidDict, ValueDict, PosDict): 
   __metaclass__ = metaclasses.NodeMC
@@ -442,6 +431,18 @@ class Node(GuidDict, ValueDict, PosDict):
     
     self.old_value = self.value
     return self
+
+
+class LookupDict(BaseIdDict, ValueDict):
+  _remove_arg_strs = ('value',)
+
+  def _get(self, **kw):
+    entries = self._table.list(db.pool, self.base_id, self._ctx, **dhkw(kw))[0]
+    if not entries:
+      self._dh = {'base_id': self.base_id}
+      return
+    self._fetched_value = entries[0]['value'] # for remove during save
+    self._dh = entries[0]
 
 
 class Alias(LookupDict):
