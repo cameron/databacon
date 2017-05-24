@@ -18,5 +18,6 @@ databacon:
   volumes:
     - ./databacon:/src
     - ./datahog:/datahog
-  command: "/bin/bash -c 'cd datahog && python setup.py install && sleep 99999999999'"
+    - ./mummy:/mummy
+  command: /bin/sh -c 'sleep 999999999999999999999'
    

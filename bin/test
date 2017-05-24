@@ -9,5 +9,5 @@ cleanup ()
 trap cleanup SIGINT SIGTERM
 
 while true; do
-  {ls **/*py; ls datahog/.installed; } | grep -v ^build | entr -d dshell databacon_datab 'PYTHONPATH=/src/ python /src/tests/test.py && date';
+  {ls **/*py; ls datahog/.installed; } | grep -v ^build | entr -d dshell databacon_datab 'python3 /src/tests/test.py && date';
 done

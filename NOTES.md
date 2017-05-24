@@ -1,13 +1,14 @@
-# DEALBREAKERS
+# GATHER DEALBREAKERS
 - how to handle schema modifications?
-- relationship
-  - flags (eg muted must not be synced, or must have muted_high and muted_low)
-  - value (seems like it'd be easy to implement syncing just as with flags, or even easier without)
+- 2to3
+  - mummy is borked (no attr subversion on sys module)
+  * gevent
+  - relationship
+    - flags (eg muted must not be synced, or must have muted_high and muted_low)
+    - value (seems like it'd be easy to implement syncing just as with flags, or even easier without)
 
 # easy
-* 2to3
-  - mummy is borked (no attr subversion on sys module)
-* gevent
+- prevent adding relations of the incorrect context type
 - rename the dh object/kwarg to row
 - support for environment-based shard-config
 - string name -> class hash for user classes on the databacon module
@@ -16,7 +17,6 @@
 - rename guid to id (along with absorbing the interface improvements from graphql branch?)
 - Singleton subclass of Node
 - Class.attr.flags is referencable but not part of the public API (.flag is correct)
-- prevent adding relations of the incorrect context type
 
 # medium
 - save unsaved node properties via node.save()

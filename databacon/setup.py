@@ -10,6 +10,6 @@ setup(
     name="databacon",
     description="a graph storage API built on datahog",
     packages=["databacon"],
-    version='.'.join(filter(None, map(str, VERSION))),
+    version='.'.join([_f for _f in map(str, VERSION) if _f]),
     install_requires=['datahog', 'mummy'],
 )

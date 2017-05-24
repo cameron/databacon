@@ -25,7 +25,7 @@ max_prepared_transactions = 100
 listen_addresses = '0.0.0.0'
 EOF
 
-    # Security Issue:
+    # TODO Security Issue:
     # the first line of the host-based auth conf file (below)
     # was changed from trust to reject to resolve an issue with the
     # legalease role not being created properly above. not clear

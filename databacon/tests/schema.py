@@ -63,7 +63,7 @@ class Doc(db.Node):
     mummy.OPTIONAL('top_terms'): [int]
   }
 
-  title = db.lookup.phonetic(loose=True)
+  title = db.lookup.prefix()
 
   scores = db.relation('Doc')
   scores.flags.similarity = db.flag.int(bits=16)

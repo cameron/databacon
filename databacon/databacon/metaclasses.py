@@ -7,9 +7,9 @@
 import inspect
 import types
 
-import flags
+from . import flags
 import datahog as dh
-import exceptions as exc
+from . import exceptions as exc
 
 
 def only_for_user_defined_subclasses(mc):
@@ -71,7 +71,7 @@ class ValueDictMC(DictMC):
   to_storage = {
     int: dh.storage.INT,
     str: dh.storage.STR,
-    unicode: dh.storage.UTF,
+    str: dh.storage.UTF,
     None: dh.storage.NULL
   }
 
@@ -150,7 +150,7 @@ class GuidMC(DictMC):
     - assign a base_ctx + define a datahog context
     '''
     cls._datahog_attrs = []
-    for attr, base_id_cls in attrs.iteritems():
+    for attr, base_id_cls in attrs.items():
 
       # Ducktype subclasses of datahog_wrappers.{BaseIdDict, List}
       # that need datahog contexts, and skip the rest.
@@ -196,7 +196,7 @@ class GuidMC(DictMC):
         base_id_cls.base_cls = cls
         base_id_cls._meta['base_ctx'] = cls._ctx
 
-        base_id_cls.__metaclass__.define_dh_ctx(base_id_cls)
+        type(base_id_cls).define_dh_ctx(base_id_cls)
         
         # setup class methods for looking up 
         # instances by name and alias

@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 
 import sys 
+sys.path.insert(0, '/mummy/python')
+sys.path.insert(0, '/datahog/')
+sys.path.insert(0, '/src')
+
 
 def info(type, value, tb):
     if hasattr(sys, 'ps1') or not sys.stderr.isatty():
@@ -40,6 +44,7 @@ term.corpus.add(corpus0)
 word = uniq("word")
 term.string(word)
 
+import pdb; pdb.set_trace()
 doc0 = Doc(value={'path': '/path/to/original.file'})
 doc0.corpus.add(corpus0)
 doc1 = Doc(value={'path': '/to/file1'})
@@ -73,7 +78,7 @@ doc00({'path': 'another'})
 exc = None
 try:
   doc0({'path': 'should fail'})
-except Exception, e:
+except Exception as e:
   pass
 assert e != None
 
@@ -225,7 +230,7 @@ for doc_term_rel, doc in term.docs(edges=True):
 exc = None
 try:
   term.special_docs[0]
-except IndexError, e:
+except IndexError as e:
   exc = e
 assert e != None
 
@@ -240,10 +245,10 @@ assert term.special_docs[0].rel_id == doc1.guid
 
 # relationship values
 value = {'some': 'thing'}
-print 'guid', term.docs[0].node().guid
+print('guid', term.docs[0].node().guid)
 term.docs[0](value)
-assert value.items()[0] in term.docs[0].value.items()
-assert value.items()[0] in [edge.value.items() for edge in term.docs[0].node().terms(edges='only') if edge.rel_id == term.guid][0]
+assert list(value.items())[0] in list(term.docs[0].value.items())
+assert list(value.items())[0] in [list(edge.value.items()) for edge in term.docs[0].node().terms(edges='only') if edge.rel_id == term.guid][0]
 
 ''' 
 TODO

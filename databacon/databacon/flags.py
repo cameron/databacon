@@ -1,8 +1,9 @@
 import math
 
 from datahog.const import flag as dh_flag
-from lang import Attrable
-import db
+from .lang import Attrable
+from . import db
+from functools import reduce
 
 
 class Field(object):
@@ -101,7 +102,10 @@ class Layout(object):
 
 
   def __getattr__(self, name):
-    return self.fields[name]
+    try:
+      self.fields[name]
+    except KeyError:
+      raise AttributeError("name")
 
   def set_flag_field(self, field_name, field_def):
     if self.frozen:
@@ -119,7 +123,7 @@ class Layout(object):
     if self.frozen:
       return
     self.frozen = True
-    for name, field in self.fields.iteritems():
+    for name, field in self.fields.items():
       for flag in range(field.first_bit, field.first_bit + field.size):
         dh_flag.set_flag(flag + 1, ctx)
 
@@ -138,7 +142,7 @@ class Layout(object):
       status=User.verification_email.flags.status.sent)
     '''
     flags = Flags(fields=self.fields)
-    for field_name, field_val in fields.iteritems():
+    for field_name, field_val in fields.items():
       setattr(flags, field_name, field_val)
     flags._dirty_flags = flags._flags_set
     return flags

@@ -2,12 +2,12 @@ import math
 import functools
 
 from datahog import node, alias, name, prop, relationship
-import greenhouse
+import gevent
 
-import exceptions as exc
-import db
-import metaclasses
-from flags import Flags
+from . import exceptions as exc
+from . import db
+from . import metaclasses
+from .flags import Flags
 
 _missing = node._missing
 guid_prefix = lambda dhw, s: '%s:%s' % (dhw.guid, s)
@@ -64,8 +64,7 @@ class Dict(object):
       raise Exception('flags not saved')
 
 
-class List(object):
-  __metaclass__ = metaclasses.ListMC
+class List(object, metaclass=metaclasses.ListMC):
   default_page_size = 100
   of_type = None
   _owner = None
@@ -119,10 +118,9 @@ class List(object):
                      **dhkw(kw))
 
 
-class ValueDict(Dict):
+class ValueDict(Dict, metaclass=metaclasses.ValueDictMC):
   ''' adds value access for datahog dicts that have values:
   nodes, props, names, and aliases '''
-  __metaclass__ = metaclasses.ValueDictMC
   schema = None
 
 
@@ -140,7 +138,7 @@ class ValueDict(Dict):
     return ({
       int: 0,
       str: '',
-      unicode: u'',
+      str: '',
       type(None): None,
       dict: {},
       list: []
@@ -247,8 +245,7 @@ class BaseIdDict(PosDict):
     return self._dh.get('base_id', None)
 
 
-class Relation(BaseIdDict, ValueDict):
-  __metaclass__ = metaclasses.RelationMC
+class Relation(BaseIdDict, ValueDict, metaclass=metaclasses.RelationMC):
   _id_arg_strs = ('base_id', 'rel_id')
   _remove_arg_strs = tuple()
   _table = relationship
@@ -301,7 +298,7 @@ class Relation(BaseIdDict, ValueDict):
       if edges and not edges == 'only':
         return edge, node
 
-      return filter(lambda i: i, (edge, node))[0]
+      return list(filter(lambda i: i, (edge, node)))[0]
 
 
     def _pages(self, edges=None, **kw):
@@ -317,7 +314,7 @@ class Relation(BaseIdDict, ValueDict):
           if not edges:
             yield nodes, offset
           else:
-            yield zip(edges_page, nodes), offset
+            yield list(zip(edges_page, nodes)), offset
 
 
     def _node_cls(self):
@@ -382,8 +379,7 @@ class Relation(BaseIdDict, ValueDict):
 
 
 # TODO merge GuidDict and Node
-class Node(GuidDict, ValueDict, PosDict): 
-  __metaclass__ = metaclasses.NodeMC
+class Node(GuidDict, ValueDict, PosDict, metaclass=metaclasses.NodeMC): 
   _table = node
   _save = node.update
   parent = None 
@@ -399,6 +395,7 @@ class Node(GuidDict, ValueDict, PosDict):
                        base_id=getattr(self.parent,'guid', None),
                        **dhkw(kw))
     super(Node, self).__init__(dh=dh)
+    print ('created', self.value, dh, kw.get('value'))
     if not had_dh and hasattr(self, 'new'):
       self.new(*args, **kw)
 
@@ -570,7 +567,7 @@ class Lock(Prop):
   
   def acquire(self, timeout=10., retry_after=1.):
     while not self.increment(limit=1):
-      greenhouse.scheduler.pause_for(retry_after)
+      gevent.sleep(retry_after)
       timeout -= retry_after
       if timeout <= 0:
         raise exc.LockAcquisitionTimeout()
@@ -598,7 +595,7 @@ dh_kwargs = ['timeout',
 def dhkw(kw, blacklist=False):
   ''' Intersect or exclude datahog kwargs '''
   pass_thru = {}
-  for key, val in kw.iteritems():
+  for key, val in kw.items():
     if key in dh_kwargs and not blacklist:
       pass_thru[key] = val
     elif key not in dh_kwargs and blacklist:
