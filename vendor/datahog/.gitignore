@@ -1,0 +1,9 @@
+.s??
+.*.s??
+*.pyc
+*.pyo
+datahog.egg-info/*
+MANIFEST.in
+build/*
+docs/build/*
+dist/*
