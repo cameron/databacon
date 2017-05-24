@@ -2,7 +2,6 @@
 
 
 
-import mummy
 
 from . import search, storage, table
 
@@ -85,8 +84,10 @@ def set_context(value, tbl, meta=None):
             raise ValueError("unrecognized storage type: %d" % meta['storage'])
 
         if 'schema' in meta:
-            meta['schema'] = type('Schema', (mummy.Message,),
-                    {'SCHEMA': meta['schema']})
+            pass
+            # TODO schemas w/o mummy
+            #meta['schema'] = type('Schema', (mummy.Message,),
+                    #{'SCHEMA': meta['schema']})
 
         if meta.get('search') == search.PHONETIC:
             raise Exception('''the Fuzzy library previously used to implement

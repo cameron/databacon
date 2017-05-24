@@ -1,0 +1,6 @@
+#! /bin/zsh
+
+touch .containers-rebuilt
+echo "Watching containers + docker-compose.yml, and killing gatherbacon_*..."
+ls .containers-rebuilt docker-compose.yml | entr bin/run
+

@@ -1,5 +1,4 @@
 import databacon as db
-import mummy
 import os
 
 
@@ -9,9 +8,9 @@ db.connect({
     'count': 4,
     'host': os.environ['DATABACON_DB_1_PORT_5432_TCP_ADDR'],
     'port': os.environ['DATABACON_DB_1_PORT_5432_TCP_PORT'],
-    'user': 'legalease',
+    'user': 'databacon',
     'password': '',
-    'database': 'legalease',
+    'database': 'databacon',
   }],
   'lookup_insertion_plans': [[(0, 1)]],
   'shard_bits': 8,
@@ -60,7 +59,7 @@ class Doc(db.Node):
 
   schema = {
     'path': str,
-    mummy.OPTIONAL('top_terms'): [int]
+    'top_terms': [int]
   }
 
   title = db.lookup.prefix()

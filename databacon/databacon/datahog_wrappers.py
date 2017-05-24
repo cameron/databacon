@@ -395,7 +395,6 @@ class Node(GuidDict, ValueDict, PosDict, metaclass=metaclasses.NodeMC):
                        base_id=getattr(self.parent,'guid', None),
                        **dhkw(kw))
     super(Node, self).__init__(dh=dh)
-    print ('created', self.value, dh, kw.get('value'))
     if not had_dh and hasattr(self, 'new'):
       self.new(*args, **kw)
 

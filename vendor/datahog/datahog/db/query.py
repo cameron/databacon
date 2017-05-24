@@ -244,7 +244,7 @@ limit %s
             'flags': flags,
             'ctx': ctx,
             'pos': pos,
-            'value': value.decode('utf8'),
+            'value': value,
         } for flags, value, pos in cursor.fetchall()]
 
 

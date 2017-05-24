@@ -6,12 +6,10 @@
 import math
 import functools
 import inspect
-
 import sys
-print(sys.path)
+
 import datahog
 from datahog.const import search
-from mummy.schemas import _validate_schema
 
 from . import metaclasses
 from . import datahog_wrappers as dhw
@@ -20,6 +18,10 @@ from . import flags
 
 __all__ = ['prop', 'relation', 'lookup', 'children', 'lock']
 
+
+def _validate_schema(*args):
+  # TODO replace mummy schema validation
+  return True
 
 def prop(schema):
   if not _validate_schema(schema):

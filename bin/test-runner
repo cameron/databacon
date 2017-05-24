@@ -1,0 +1,14 @@
+#! /bin/zsh
+
+cleanup ()
+{
+  kill -s SIGTERM $!
+  exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+while true; do
+  { ls **/*py; ls .server-restarting; } | grep -v ^build | entr -d dshell databacon_datab 'python3 /src/tests/test.py && date';
+  sleep 1
+done

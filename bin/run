@@ -1,0 +1,5 @@
+#! /bin/bash
+
+dkill databacon > /dev/null 2>&1
+echo '' > .server-restarting
+docker-compose run --service-ports --rm -d databacon

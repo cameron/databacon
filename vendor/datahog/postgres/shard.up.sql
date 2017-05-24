@@ -62,7 +62,7 @@ create table relationship (
   ctx smallint not null,
   pos int not null,
   forward bool not null,
-  value bytea default null
+  value jsonb default null
 );
 
 create unique index relationship_uniq_forward on relationship (
@@ -90,7 +90,7 @@ create table node (
   time_removed timestamp default null,
   ctx smallint not null,
   num bigint default null,
-  value bytea default null,
+  value jsonb default null,
   check (num is null or value is null)
 );
 

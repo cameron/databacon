@@ -1,0 +1,6 @@
+#! /bin/zsh
+
+echo "Watching ***/*py, pkilling python test process..."
+while true; do
+    ls ***/*py | entr -d dshell databacon_datatbacon 'pkill python'
+done;

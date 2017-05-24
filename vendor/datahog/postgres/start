@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PGVERSION="9.3"
+PGVERSION="9.6"
 BINDIR="/usr/lib/postgresql/$PGVERSION/bin"
 DATADIR="/var/lib/postgresql/$PGVERSION/main"
 
@@ -13,11 +13,11 @@ if [ ! -f "$DATADIR/postgresql.conf" ]; then
     su postgres -c "$BINDIR/pg_ctl start -D $DATADIR"
     sleep 2
     su postgres -c psql <<EOF
-    create role legalease with login;
-    create database legalease with owner legalease;
+    create role $DATAHOG_PG_USER with login;
+    create database $DATAHOG_PG_DB with owner $DATAHOG_PG_USER;
     create extension if not exists fuzzystrmatch;
 EOF
-    su postgres -c 'psql legalease legalease' </shard.up.sql
+    su postgres -c 'psql $DATAHOG_PG_USER $DATAHOG_PG_USER' </shard.up.sql
 
     su postgres -c "$BINDIR/pg_ctl stop -D $DATADIR"
     cat >>$DATADIR/postgresql.conf <<EOF
@@ -25,11 +25,11 @@ max_prepared_transactions = 100
 listen_addresses = '0.0.0.0'
 EOF
 
-    # TODO Security Issue:
+    # TODO security
     # the first line of the host-based auth conf file (below)
     # was changed from trust to reject to resolve an issue with the
     # legalease role not being created properly above. not clear
-    # why this would work; poses security risk in production.
+    # why this would work; may pose security risk in production.
     cat >>$DATADIR/pg_hba.conf <<EOF
 host	all	postgres	0.0.0.0/0	reject
 host	all	all		0.0.0.0/0	trust

@@ -2,10 +2,10 @@
 
 
 
-#import mummy
-import pickle
+import json
 import psycopg2
 from functools import wraps
+
 from . import context, flag, storage, table
 from .. import error
 
@@ -123,21 +123,7 @@ def int_to_flags(ctx, flag_num):
 
 import io
 def storage_wrap(ctx, value):
-    st = ctx_storage(ctx)
-
-    if st == storage.INT:
-        if not isinstance(value, int):
-            raise error.StorageClassError("INT requires int or long")
-        return value
-
-    if value is None:
-        return None
-
-    bits = io.BytesIO()
-    pickle.dump(value, bits)
-    print('pickled', value)
-    return bits.read()
-
+    return json.dumps(value)
 
     if st == storage.NULL:
         if value is not None:
@@ -184,22 +170,12 @@ _Binary = type(psycopg2.Binary(''))
 
 
 def storage_unwrap(ctx, value):
-    st = ctx_storage(ctx)
-
-    if st in (storage.STR, storage.UTF):
-        if not value:
-            return ''
-        
-    if st == storage.INT:
-        if not value:
-            return 0
+    if type(value) is dict:
+        # TODO is psycopg2 doing its own loads?
         return value
+    value = value if value is not None else 'null'
+    return json.loads(value)
 
-    if not value:
-        return None
-    bits = io.BytesIO(value)
-    return pickle.loads(bits.read())
- 
     st = ctx_storage(ctx)
     if st is None:
         raise error.BadContext(ctx)

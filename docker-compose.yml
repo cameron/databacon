@@ -1,9 +1,12 @@
 db:
-  build: ./postgres
+  build: ./vendor/datahog/postgres
   ports:
     - "6543:5432"
   volumes_from:
     - data
+  environment:
+    - DATAHOG_PG_USER=databacon
+    - DATAHOG_PG_DB=databacon
 
 data:
   image: postgres
@@ -17,7 +20,6 @@ databacon:
     - db
   volumes:
     - ./databacon:/src
-    - ./datahog:/datahog
-    - ./mummy:/mummy
+    - ./vendor/datahog:/datahog
   command: /bin/sh -c 'sleep 999999999999999999999'
    

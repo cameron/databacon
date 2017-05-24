@@ -1,0 +1,3 @@
+#! /bin/zsh
+
+ls **/Dockerfile | entr -s 'docker-compose build; echo "" > .containers-rebuilt'

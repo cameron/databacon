@@ -742,7 +742,7 @@ def _write_name_lookup(pool, tpc, base_id, ctx, value, flags, timer):
 
 def _write_prefix_lookup(pool, base_id, ctx, value, flags, timer):
     with pool.get_by_shard(
-            pool.shard_for_prefix_write(value.encode('utf8'))) as conn:
+            pool.shard_for_prefix_write(value)) as conn:
         timer.conn = conn
         try:
             return query.insert_prefix_lookup(
@@ -814,7 +814,7 @@ def _search_prefix(pool, value, ctx, limit, start, timer):
         start = ''
 
     names = []
-    shards = list(pool.shards_for_lookup_prefix(value.encode('utf8')))
+    shards = list(pool.shards_for_lookup_prefix(value))
     for shard in shards:
         with pool.get_by_shard(shard) as conn:
             try:

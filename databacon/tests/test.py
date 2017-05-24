@@ -44,7 +44,6 @@ term.corpus.add(corpus0)
 word = uniq("word")
 term.string(word)
 
-import pdb; pdb.set_trace()
 doc0 = Doc(value={'path': '/path/to/original.file'})
 doc0.corpus.add(corpus0)
 doc1 = Doc(value={'path': '/to/file1'})
@@ -77,10 +76,10 @@ doc00({'path': 'another'})
 # Updating stale node values should fail
 exc = None
 try:
-  doc0({'path': 'should fail'})
+  doc0(value={'path': 'should fail'})
 except Exception as e:
-  pass
-assert e != None
+    exc = e
+assert exc != None
 
 # Forcing an update should not fail
 doc0(value={'path': 'brute force'}, force_overwrite=True)
@@ -150,14 +149,16 @@ for email in user0.emails():
 #assert corpus1.terms.by_string(word) == None
 
 # Property
-pass_flags = User.password.flags(two_factor=True)
-user0.password('new_password', flags=pass_flags)
+user0.password('new_password')
 assert user0.password().value == 'new_password'
 
 user0.password('newer_password') # replaces 'new_password'
 pw = user0.password() # fetch it fresh
 assert pw.value == 'newer_password'
-assert pw.flags.two_factor == True
+
+user0.password.flags.two_factor = True
+user0.password.flags.save()
+assert user0.password().flags.two_factor == True
 
 
 ###
@@ -166,7 +167,7 @@ assert pw.flags.two_factor == True
 
 
 # Create
-score0_int = int(.4 * Doc.scores.flags.similarity.max_val)
+score0_int = 10
 score0_flags = Doc.scores.flags(similarity=score0_int)
 assert doc0.scores.add(doc1, flags=score0_flags) == True
 
@@ -231,8 +232,8 @@ exc = None
 try:
   term.special_docs[0]
 except IndexError as e:
-  exc = e
-assert e != None
+    exc = e
+assert exc != None
 
 # create a special doc relation and make sure it didn't bleed into
 # the other docs relation
@@ -245,7 +246,6 @@ assert term.special_docs[0].rel_id == doc1.guid
 
 # relationship values
 value = {'some': 'thing'}
-print('guid', term.docs[0].node().guid)
 term.docs[0](value)
 assert list(value.items())[0] in list(term.docs[0].value.items())
 assert list(value.items())[0] in [list(edge.value.items()) for edge in term.docs[0].node().terms(edges='only') if edge.rel_id == term.guid][0]
